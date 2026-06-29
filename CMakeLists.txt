@@ -11,6 +11,7 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 if(NOT DEFINED CEF_ROOT)
   message(FATAL_ERROR "Set CEF_ROOT to the path of your CEF SDK folder, e.g. -DCEF_ROOT=C:/cef_binary_...")
 endif()
+get_filename_component(CEF_ROOT "${CEF_ROOT}" ABSOLUTE)
 
 set(CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
