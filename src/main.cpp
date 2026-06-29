@@ -3,6 +3,7 @@
 // No bookmarks, no profile, no built-in AI, no branding.
 
 #include <windows.h>
+#include <commctrl.h>
 #include <string>
 
 #include "include/cef_app.h"
