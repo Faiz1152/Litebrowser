@@ -5,6 +5,8 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <string>
+#include <cstdio>
+#include <cctype>
 
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
@@ -159,7 +161,7 @@ void CreateMainWindow(HINSTANCE hinstance) {
 
 }  // namespace
 
-int APIENTRY wWinMain(HINSTANCE hInstance, HINSTANCE, LPWSTR, int) {
+int APIENTRY WinMain(HINSTANCE hInstance, HINSTANCE, LPSTR, int) {
   CefMainArgs main_args(hInstance);
 
   CefRefPtr<LiteBrowserApp> app(new LiteBrowserApp);
