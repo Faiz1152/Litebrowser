@@ -14,6 +14,7 @@ endif()
 
 set(CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
+ADD_LOGICAL_TARGET("libcef_lib" "${CEF_LIB_DEBUG}" "${CEF_LIB_RELEASE}")
 
 add_subdirectory("${CEF_ROOT}/libcef_dll" libcef_dll_wrapper)
 target_include_directories(libcef_dll_wrapper PUBLIC "${CEF_ROOT}")
