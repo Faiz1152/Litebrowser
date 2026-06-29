@@ -15,6 +15,7 @@ set(CMAKE_MODULE_PATH "${CEF_ROOT}/cmake")
 find_package(CEF REQUIRED)
 
 add_subdirectory("${CEF_ROOT}/libcef_dll" libcef_dll_wrapper)
+target_include_directories(libcef_dll_wrapper PUBLIC "${CEF_ROOT}")
 
 add_executable(LiteBrowser WIN32
   src/main.cpp
