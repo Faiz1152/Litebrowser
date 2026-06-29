@@ -1,0 +1,54 @@
+name: Build LiteBrowser
+
+on:
+  workflow_dispatch:    # lets you click a "Run workflow" button manually
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Get the project files
+        uses: actions/checkout@v4
+
+      - name: Find the latest CEF download link
+        shell: pwsh
+        run: |
+          $index = Invoke-RestMethod -Uri "https://cef-builds.spotifycdn.com/index.json"
+          $versions = $index.windows64.versions | Where-Object { $_.channel -eq "stable" }
+          $latest = $versions[0]
+          $standardFile = $latest.files | Where-Object { $_.type -eq "standard" }
+          $url = "https://cef-builds.spotifycdn.com/" + $standardFile.name
+          Write-Host "Downloading: $url"
+          echo "CEF_URL=$url" >> $env:GITHUB_ENV
+          echo "CEF_NAME=$($standardFile.name)" >> $env:GITHUB_ENV
+
+      - name: Download CEF
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:CEF_URL -OutFile cef.tar.bz2
+
+      - name: Extract CEF
+        shell: pwsh
+        run: |
+          tar -xjf cef.tar.bz2
+          $extracted = Get-ChildItem -Directory -Filter "cef_binary_*" | Select-Object -First 1
+          Rename-Item $extracted.FullName "cef"
+
+      - name: Configure
+        shell: cmd
+        run: |
+          cmake -B build -DCEF_ROOT="cef" -G "Visual Studio 17 2022" -A x64
+
+      - name: Build
+        shell: cmd
+        run: |
+          cmake --build build --config Release
+
+      - name: Upload finished browser
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiteBrowser-windows
+          path: build/Release/
