@@ -6,6 +6,18 @@
 #include <algorithm>
 #include <cstdio>
 #include <cctype>
+
+// Kill Windows macros that clash with CEF's DOM header
+#ifdef GetNextSibling
+#undef GetNextSibling
+#endif
+#ifdef GetFirstChild
+#undef GetFirstChild
+#endif
+#ifdef GetParent
+#undef GetParent
+#endif
+
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "app.h"
