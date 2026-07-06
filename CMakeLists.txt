@@ -29,7 +29,19 @@ add_executable(LiteBrowser WIN32
 )
 
 target_include_directories(LiteBrowser PRIVATE "${CEF_ROOT}")
-target_compile_definitions(LiteBrowser PRIVATE NOMINMAX WIN32_LEAN_AND_MEAN UNICODE _UNICODE NOIME NOMCX NOSERVICE VC_EXTRA_LEAN WIN32_EXTRA_LEAN)
+target_compile_definitions(LiteBrowser PRIVATE 
+    NOMINMAX 
+    WIN32_LEAN_AND_MEAN 
+    UNICODE 
+    _UNICODE 
+    NOIME 
+    NOMCX 
+    NOSERVICE 
+    VC_EXTRA_LEAN 
+    WIN32_EXTRA_LEAN
+    "GetNextSibling=CefDOMNode_GetNextSibling_"
+    "GetFirstChild=CefDOMNode_GetFirstChild_"
+)
 target_link_libraries(LiteBrowser libcef_lib libcef_dll_wrapper comctl32)
 
 # Copy the CEF runtime files (the DLL + its data files) next to our exe
