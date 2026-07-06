@@ -1,4 +1,3 @@
-
 #include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
@@ -7,12 +6,23 @@
 #include <algorithm>
 #include <cstdio>
 #include <cctype>
+
+// Kill Windows macros that clash with CEF's DOM header
+#ifdef GetNextSibling
+#undef GetNextSibling
+#endif
+#ifdef GetFirstChild
+#undef GetFirstChild
+#endif
+#ifdef GetParent
+#undef GetParent
+#endif
+
 #include "include/cef_app.h"
 #include "include/cef_browser.h"
 #include "app.h"
 #include "client_handler.h"
 
-// ── Constants ─────────────────────────────────────────────
 static const int kTabH  = 34;
 static const int kToolH = 36;
 static const int kSideW = 220;
@@ -20,7 +30,6 @@ static const wchar_t kWndClass[] = L"LiteBrowserMain";
 static const int ID_FOCUS_TIMER = 200;
 static const int ID_SMART_TIMER = 201;
 
-// ── Theme ─────────────────────────────────────────────────
 struct Theme { COLORREF bg,chrome,text,border,tabOn,tabOff,sidebar,accent; };
 static const Theme kLight{RGB(255,255,255),RGB(235,235,235),RGB(20,20,20),
     RGB(200,200,200),RGB(255,255,255),RGB(220,220,220),RGB(248,248,248),RGB(0,102,204)};
@@ -29,13 +38,11 @@ static const Theme kDark{RGB(24,24,24),RGB(36,36,36),RGB(220,220,220),
 static bool  g_dark = false;
 static Theme g_T    = kLight;
 
-// ── Blocker globals (extern in client_handler.h) ──────────
 bool g_blockAds      = true;
 bool g_blockTrackers = true;
 bool g_blockPopups   = true;
 bool g_focus         = false;
 
-// ── Tab ───────────────────────────────────────────────────
 struct Tab {
     int id;
     std::wstring title, url;
@@ -48,22 +55,18 @@ static std::vector<Tab> g_tabs;
 static int g_activeIdx = -1;
 static int g_tabCtr    = 0;
 
-// ── Sidebar ───────────────────────────────────────────────
 static bool g_sideOpen = false;
 static bool g_showBm   = true;
 struct Entry { std::wstring title, url; };
 static std::vector<Entry> g_bookmarks, g_history;
 
-// ── Focus ─────────────────────────────────────────────────
 static int g_focusSecs = 0;
 
-// ── Handles ───────────────────────────────────────────────
 static HWND  g_hwnd   = nullptr;
 static HWND  g_addr   = nullptr;
 static HWND  g_sbList = nullptr;
 static HFONT g_font   = nullptr;
 
-// ── String helpers ────────────────────────────────────────
 static std::string W2A(const std::wstring& w) {
     if (w.empty()) return "";
     int n = WideCharToMultiByte(CP_UTF8,0,w.c_str(),(int)w.size(),nullptr,0,nullptr,nullptr);
@@ -88,7 +91,6 @@ static std::wstring NormalizeUrl(const std::wstring& raw) {
     return L"https://www.google.com/search?q="+q;
 }
 
-// ── Layout helpers ────────────────────────────────────────
 static RECT CR()  { RECT r; GetClientRect(g_hwnd,&r); return r; }
 static int  SW()  { return g_sideOpen ? kSideW : 0; }
 static RECT TabBarRc() { RECT c=CR(); return {SW(),0,c.right,kTabH}; }
@@ -114,7 +116,6 @@ static bool CloseHit(int i,int x,int y) {
     return abs(x-cx)<9&&abs(y-cy)<9;
 }
 
-// ── GDI helpers ───────────────────────────────────────────
 static void FillRc(HDC h,RECT r,COLORREF c){HBRUSH b=CreateSolidBrush(c);FillRect(h,&r,b);DeleteObject(b);}
 static void Txt(HDC h,const std::wstring& s,RECT r,COLORREF c,UINT f=DT_SINGLELINE|DT_VCENTER|DT_CENTER|DT_END_ELLIPSIS){
     SetTextColor(h,c);SetBkMode(h,TRANSPARENT);
@@ -123,12 +124,9 @@ static void Txt(HDC h,const std::wstring& s,RECT r,COLORREF c,UINT f=DT_SINGLELI
 static void HLine(HDC h,int x1,int x2,int y,COLORREF c){HPEN p=CreatePen(PS_SOLID,1,c),o=(HPEN)SelectObject(h,p);MoveToEx(h,x1,y,nullptr);LineTo(h,x2,y);SelectObject(h,o);DeleteObject(p);}
 static void VLine(HDC h,int x,int y1,int y2,COLORREF c){HPEN p=CreatePen(PS_SOLID,1,c),o=(HPEN)SelectObject(h,p);MoveToEx(h,x,y1,nullptr);LineTo(h,x,y2);SelectObject(h,o);DeleteObject(p);}
 
-// ── Paint ─────────────────────────────────────────────────
 static void PaintAll(HDC hdc) {
     RECT cr=CR();
     FillRc(hdc,cr,g_T.bg);
-
-    // Sidebar
     if (g_sideOpen) {
         RECT sr={0,0,kSideW,cr.bottom};
         FillRc(hdc,sr,g_T.sidebar);
@@ -146,8 +144,6 @@ static void PaintAll(HDC hdc) {
             Txt(hdc,L"+ Bookmark this page",ar,RGB(255,255,255));
         }
     }
-
-    // Tab bar
     RECT tbr=TabBarRc();
     FillRc(hdc,tbr,g_T.chrome);
     HLine(hdc,tbr.left,tbr.right,kTabH-1,g_T.border);
@@ -163,12 +159,9 @@ static void PaintAll(HDC hdc) {
     }
     RECT plus={tbr.right-28,4,tbr.right-4,kTabH-4};
     FillRc(hdc,plus,g_T.tabOff); Txt(hdc,L"+",plus,g_T.text);
-
-    // Toolbar
     RECT tr=ToolbarRc();
     FillRc(hdc,tr,g_T.chrome);
     HLine(hdc,tr.left,tr.right,tr.bottom-1,g_T.border);
-
     int bx=SW()+4,by=kTabH+4,bw=28,bh=kToolH-8;
     auto Btn=[&](int x,const wchar_t* lbl,COLORREF bg){
         RECT r={x,by,x+bw,by+bh}; FillRc(hdc,r,bg);
@@ -176,15 +169,13 @@ static void PaintAll(HDC hdc) {
         Rectangle(hdc,x,by,x+bw,by+bh); SelectObject(hdc,o); DeleteObject(p);
         Txt(hdc,lbl,r,g_T.text);
     };
-    Btn(bx,       L"←",g_T.tabOff);
-    Btn(bx+30,    L"→",g_T.tabOff);
-    Btn(bx+60,    L"↺",g_T.tabOff);
-
+    Btn(bx,    L"←",g_T.tabOff);
+    Btn(bx+30, L"→",g_T.tabOff);
+    Btn(bx+60, L"↺",g_T.tabOff);
     int rx=cr.right-3*30-4;
-    Btn(rx,     g_focus?L"⊙":L"○", g_focus?RGB(200,50,50):g_T.tabOff);
-    Btn(rx+30,  g_dark?L"☀":L"☾",  g_T.tabOff);
-    Btn(rx+60,  g_sideOpen?L"◀":L"▶", g_T.tabOff);
-
+    Btn(rx,    g_focus?L"⊙":L"○", g_focus?RGB(200,50,50):g_T.tabOff);
+    Btn(rx+30, g_dark?L"☀":L"☾",  g_T.tabOff);
+    Btn(rx+60, g_sideOpen?L"◀":L"▶", g_T.tabOff);
     if (g_focus&&g_focusSecs>0) {
         wchar_t buf[32]; swprintf(buf,32,L"%d:%02d",g_focusSecs/60,g_focusSecs%60);
         RECT fr={rx-70,by,rx-4,by+bh};
@@ -192,7 +183,6 @@ static void PaintAll(HDC hdc) {
     }
 }
 
-// ── Layout ────────────────────────────────────────────────
 static void Layout() {
     if (!g_hwnd) return;
     RECT cr=CR();
@@ -216,7 +206,6 @@ static void Layout() {
     InvalidateRect(g_hwnd,nullptr,FALSE);
 }
 
-// ── Sidebar list ──────────────────────────────────────────
 static void RefreshList() {
     if (!g_sbList) return;
     SendMessage(g_sbList,LB_RESETCONTENT,0,0);
@@ -224,7 +213,6 @@ static void RefreshList() {
     for (auto& e:lst) SendMessage(g_sbList,LB_ADDSTRING,0,(LPARAM)(e.title.empty()?e.url:e.title).c_str());
 }
 
-// ── Callbacks from ClientHandler ──────────────────────────
 void OnBrowserCreated(int tabId, CefRefPtr<CefBrowser> browser) {
     for (auto& t:g_tabs) if (t.id==tabId) {
         t.browser=browser;
@@ -254,7 +242,6 @@ void AddHistory(const std::wstring& title, const std::wstring& url) {
     if (g_sideOpen&&!g_showBm) RefreshList();
 }
 
-// ── Tab management ────────────────────────────────────────
 static void CreateTab(const std::wstring& url=L"https://www.google.com") {
     if (g_activeIdx>=0&&g_activeIdx<(int)g_tabs.size()) {
         auto& old=g_tabs[g_activeIdx];
@@ -310,7 +297,6 @@ static void SmartReorder() {
     InvalidateRect(g_hwnd,nullptr,FALSE);
 }
 
-// ── Navigate ──────────────────────────────────────────────
 static void Navigate(const std::wstring& input) {
     if (g_activeIdx<0||g_activeIdx>=(int)g_tabs.size()) return;
     auto& t=g_tabs[g_activeIdx];
@@ -319,7 +305,6 @@ static void Navigate(const std::wstring& input) {
     SetWindowTextW(g_addr,url.c_str());
 }
 
-// ── Click handlers ────────────────────────────────────────
 static void ToolbarClick(int x,int y) {
     RECT cr=CR();
     int bx=SW()+4,by=kTabH+4,bw=28,bh=kToolH-8;
@@ -331,7 +316,7 @@ static void ToolbarClick(int x,int y) {
     if (x>=rx&&x<rx+bw&&y>=by&&y<by+bh) {
         g_focus=!g_focus;
         if (g_focus) { g_focusSecs=25*60; SetTimer(g_hwnd,ID_FOCUS_TIMER,1000,nullptr); }
-        else { KillTimer(g_hwnd,ID_FOCUS_TIMER); g_focusSecs=0; SetWindowTextW(g_hwnd,L"Browser"); }
+        else { KillTimer(g_hwnd,ID_FOCUS_TIMER); g_focusSecs=0; }
         InvalidateRect(g_hwnd,nullptr,FALSE); return;
     }
     if (x>=rx+30&&x<rx+58&&y>=by&&y<by+bh) {
@@ -356,7 +341,6 @@ static void SidebarClick(int x,int y) {
     }
 }
 
-// ── Address bar subclass ──────────────────────────────────
 static LRESULT CALLBACK AddrProc(HWND h,UINT m,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR) {
     if (m==WM_KEYDOWN&&w==VK_RETURN) {
         wchar_t buf[2048]; GetWindowTextW(h,buf,2048); Navigate(buf); return 0;
@@ -364,7 +348,6 @@ static LRESULT CALLBACK AddrProc(HWND h,UINT m,WPARAM w,LPARAM l,UINT_PTR,DWORD_
     return DefSubclassProc(h,m,w,l);
 }
 
-// ── WndProc ───────────────────────────────────────────────
 static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
     switch(msg) {
     case WM_CREATE:
@@ -384,10 +367,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         ShowWindow(g_sbList,SW_HIDE);
         SetTimer(hwnd,ID_SMART_TIMER,30000,nullptr);
         return 0;
-
     case WM_SIZE:    Layout(); return 0;
     case WM_ERASEBKGND: return 1;
-
     case WM_PAINT: {
         RECT cr; GetClientRect(hwnd,&cr);
         PAINTSTRUCT ps; HDC hdc=BeginPaint(hwnd,&ps);
@@ -421,25 +402,21 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
             }
         }
         return 0;
-
     case WM_TIMER:
         if (wp==ID_FOCUS_TIMER) {
             if (g_focusSecs>0) { g_focusSecs--; InvalidateRect(hwnd,nullptr,FALSE); }
             if (g_focusSecs==0) {
                 KillTimer(hwnd,ID_FOCUS_TIMER); g_focus=false;
-                SetWindowTextW(hwnd,L"Browser");
-                MessageBoxW(hwnd,L"Focus session complete! 🎉",L"Browser",MB_OK|MB_ICONINFORMATION);
+                MessageBoxW(hwnd,L"Focus session complete!",L"Browser",MB_OK|MB_ICONINFORMATION);
                 InvalidateRect(hwnd,nullptr,FALSE);
             }
         } else if (wp==ID_SMART_TIMER) { SmartReorder(); }
         return 0;
-
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
     return DefWindowProc(hwnd,msg,wp,lp);
 }
 
-// ── WinMain ───────────────────────────────────────────────
 int APIENTRY WinMain(HINSTANCE hInstance,HINSTANCE,LPSTR,int) {
     CefMainArgs args(hInstance);
     CefRefPtr<LiteBrowserApp> app(new LiteBrowserApp);
