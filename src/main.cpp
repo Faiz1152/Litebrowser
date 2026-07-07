@@ -199,8 +199,13 @@ static void Layout() {
     if (g_activeIdx>=0&&g_activeIdx<(int)g_tabs.size()) {
         auto& t=g_tabs[g_activeIdx];
         if (t.browser) {
-            RECT br=BrowserRc(); HWND bh=t.browser->GetHost()->GetWindowHandle();
-            if (bh) MoveWindow(bh,br.left,br.top,br.right-br.left,br.bottom-br.top,TRUE);
+            HWND bh=t.browser->GetHost()->GetWindowHandle();
+            if (bh&&IsWindow(bh)) {
+                RECT br=BrowserRc();
+                SetWindowPos(bh,nullptr,br.left,br.top,
+                    br.right-br.left,br.bottom-br.top,
+                    SWP_NOZORDER|SWP_NOACTIVATE);
+            }
         }
     }
     InvalidateRect(g_hwnd,nullptr,FALSE);
