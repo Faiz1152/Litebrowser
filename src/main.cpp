@@ -310,13 +310,15 @@ static void Navigate(const std::wstring& input) {
     std::wstring url=NormalizeUrl(input); t.url=url;
     SetWindowTextW(g_addr,url.c_str());
     if (t.browser) {
-        struct NavTask { CefRefPtr<CefBrowser> browser; std::string url; };
-        auto* task = new NavTask{t.browser, W2A(url)};
-        CefPostTask(TID_UI, base::BindOnce(
-            [](NavTask* t){
-                t->browser->GetMainFrame()->LoadURL(t->url);
-                delete t;
-            }, task));
+        class NavTask : public CefTask {
+        public:
+            NavTask(CefRefPtr<CefBrowser> b, std::string u) : browser(b), url(u) {}
+            void Execute() override { browser->GetMainFrame()->LoadURL(url); }
+            CefRefPtr<CefBrowser> browser;
+            std::string url;
+            IMPLEMENT_REFCOUNTING(NavTask);
+        };
+        CefPostTask(TID_UI, new NavTask(t.browser, W2A(url)));
     }
 }
 
