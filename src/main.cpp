@@ -7,7 +7,6 @@
 #include <cstdio>
 #include <cctype>
 
-// Kill Windows macros that clash with CEF's DOM header
 #ifdef GetNextSibling
 #undef GetNextSibling
 #endif
@@ -68,6 +67,8 @@ static HWND  g_hwnd   = nullptr;
 static HWND  g_addr   = nullptr;
 static HWND  g_sbList = nullptr;
 static HFONT g_font   = nullptr;
+
+#define REDRAW_CHROME() do { RECT _ir={0,0,20000,kTabH+kToolH}; InvalidateRect(g_hwnd,&_ir,FALSE); } while(0)
 
 static std::string W2A(const std::wstring& w) {
     if (w.empty()) return "";
@@ -210,7 +211,7 @@ static void Layout() {
             }
         }
     }
-    InvalidateRect(g_hwnd,nullptr,FALSE);
+    REDRAW_CHROME();
 }
 
 static void RefreshList() {
@@ -232,7 +233,7 @@ void OnBrowserCreated(int tabId, CefRefPtr<CefBrowser> browser) {
 }
 void OnTitleChanged(int tabId, const std::wstring& title) {
     for (auto& t:g_tabs) if (t.id==tabId) { t.title=title; break; }
-    InvalidateRect(g_hwnd,nullptr,FALSE);
+    REDRAW_CHROME();
 }
 void OnUrlChanged(int tabId, const std::wstring& url) {
     for (auto& t:g_tabs) if (t.id==tabId) {
@@ -301,7 +302,7 @@ static void SmartReorder() {
         return sa>sb;
     });
     if (aid>=0) for (int i=0;i<(int)g_tabs.size();i++) if(g_tabs[i].id==aid){g_activeIdx=i;break;}
-    InvalidateRect(g_hwnd,nullptr,FALSE);
+    REDRAW_CHROME();
 }
 
 static void Navigate(const std::wstring& input) {
@@ -334,10 +335,10 @@ static void ToolbarClick(int x,int y) {
         g_focus=!g_focus;
         if (g_focus) { g_focusSecs=25*60; SetTimer(g_hwnd,ID_FOCUS_TIMER,1000,nullptr); }
         else { KillTimer(g_hwnd,ID_FOCUS_TIMER); g_focusSecs=0; }
-        InvalidateRect(g_hwnd,nullptr,FALSE); return;
+        REDRAW_CHROME(); return;
     }
     if (x>=rx+30&&x<rx+58&&y>=by&&y<by+bh) {
-        g_dark=!g_dark; g_T=g_dark?kDark:kLight; InvalidateRect(g_hwnd,nullptr,FALSE); return;
+        g_dark=!g_dark; g_T=g_dark?kDark:kLight; REDRAW_CHROME(); return;
     }
     if (x>=rx+60&&x<rx+88&&y>=by&&y<by+bh) {
         g_sideOpen=!g_sideOpen; Layout(); return;
@@ -347,14 +348,14 @@ static void SidebarClick(int x,int y) {
     if (!g_sideOpen||x>=kSideW) return;
     RECT cr=CR(); int bw=(kSideW-4)/2;
     if (y>=kTabH+4&&y<kTabH+kToolH-4) {
-        if (x>=2&&x<2+bw) { g_showBm=true;  RefreshList(); InvalidateRect(g_hwnd,nullptr,FALSE); }
-        else               { g_showBm=false; RefreshList(); InvalidateRect(g_hwnd,nullptr,FALSE); }
+        if (x>=2&&x<2+bw) { g_showBm=true;  RefreshList(); REDRAW_CHROME(); }
+        else               { g_showBm=false; RefreshList(); REDRAW_CHROME(); }
         return;
     }
     if (g_showBm&&y>=cr.bottom-30&&y<cr.bottom-4&&g_activeIdx>=0) {
         auto& t=g_tabs[g_activeIdx];
         g_bookmarks.push_back({t.title,t.url});
-        RefreshList(); InvalidateRect(g_hwnd,nullptr,FALSE);
+        RefreshList(); REDRAW_CHROME();
     }
 }
 
@@ -392,10 +393,10 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         RECT cr; GetClientRect(hwnd,&cr);
         PAINTSTRUCT ps; HDC hdc=BeginPaint(hwnd,&ps);
         HDC m=CreateCompatibleDC(hdc);
-        HBITMAP b=CreateCompatibleBitmap(hdc,cr.right,cr.bottom);
+        HBITMAP b=CreateCompatibleBitmap(hdc,cr.right,kTabH+kToolH);
         HBITMAP ob=(HBITMAP)SelectObject(m,b);
         PaintAll(m);
-        BitBlt(hdc,0,0,cr.right,cr.bottom,m,0,0,SRCCOPY);
+        BitBlt(hdc,0,0,cr.right,kTabH+kToolH,m,0,0,SRCCOPY);
         SelectObject(m,ob); DeleteObject(b); DeleteDC(m);
         EndPaint(hwnd,&ps); return 0;
     }
@@ -423,11 +424,11 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         return 0;
     case WM_TIMER:
         if (wp==ID_FOCUS_TIMER) {
-            if (g_focusSecs>0) { g_focusSecs--; InvalidateRect(hwnd,nullptr,FALSE); }
+            if (g_focusSecs>0) { g_focusSecs--; REDRAW_CHROME(); }
             if (g_focusSecs==0) {
                 KillTimer(hwnd,ID_FOCUS_TIMER); g_focus=false;
                 MessageBoxW(hwnd,L"Focus session complete!",L"Browser",MB_OK|MB_ICONINFORMATION);
-                InvalidateRect(hwnd,nullptr,FALSE);
+                REDRAW_CHROME();
             }
         } else if (wp==ID_SMART_TIMER) { SmartReorder(); }
         return 0;
