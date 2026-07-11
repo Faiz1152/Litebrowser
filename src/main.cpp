@@ -56,6 +56,7 @@ static Theme g_T    = kLight;
 bool g_focus = false;
 bool g_blockAds = true;
 bool g_blockTrackers = true;
+bool g_blockPopups = true;
 
 struct Tab {
     int id;
