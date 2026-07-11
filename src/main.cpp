@@ -24,25 +24,36 @@
 #include "app.h"
 #include "client_handler.h"
 
-static const int kTabH  = 34;
-static const int kToolH = 36;
+#pragma comment(lib, "msimg32.lib")
+
+static const int kTabH  = 38;
+static const int kToolH = 40;
 static const int kSideW = 220;
+static const int kTabGap = 4;
+static const int kTabRadius = 10;
+static const int kBtnRadius = 8;
 static const wchar_t kWndClass[] = L"LiteBrowserMain";
 static const int ID_FOCUS_TIMER = 200;
 static const int ID_SMART_TIMER = 201;
+static const int ID_ANIM_TIMER  = 202;
 
-struct Theme { COLORREF bg,chrome,text,border,tabOn,tabOff,sidebar,accent; };
-static const Theme kLight{RGB(255,255,255),RGB(235,235,235),RGB(20,20,20),
-    RGB(200,200,200),RGB(255,255,255),RGB(220,220,220),RGB(248,248,248),RGB(0,102,204)};
-static const Theme kDark{RGB(24,24,24),RGB(36,36,36),RGB(220,220,220),
-    RGB(60,60,60),RGB(50,50,50),RGB(36,36,36),RGB(30,30,30),RGB(30,144,255)};
+struct Theme {
+    COLORREF bg,chrome,text,textDim,border,tabOn,tabOff,tabHover,sidebar,accent,btnHover,shadow;
+};
+static const Theme kLight{
+    RGB(255,255,255),RGB(242,242,244),RGB(20,20,20),RGB(120,120,120),
+    RGB(224,224,226),RGB(255,255,255),RGB(228,228,230),RGB(238,238,240),
+    RGB(248,248,248),RGB(0,102,204),RGB(220,220,224),RGB(0,0,0)
+};
+static const Theme kDark{
+    RGB(24,24,26),RGB(34,34,37),RGB(225,225,228),RGB(140,140,145),
+    RGB(52,52,56),RGB(48,48,52),RGB(30,30,32),RGB(40,40,44),
+    RGB(28,28,30),RGB(56,150,255),RGB(52,52,58),RGB(0,0,0)
+};
 static bool  g_dark = false;
 static Theme g_T    = kLight;
 
-bool g_blockAds      = true;
-bool g_blockTrackers = true;
-bool g_blockPopups   = true;
-bool g_focus         = false;
+bool g_focus = false;
 
 struct Tab {
     int id;
@@ -51,6 +62,7 @@ struct Tab {
     CefRefPtr<ClientHandler> handler;
     DWORD lastUsed = 0;
     int   useCount = 0;
+    float curW = 0.f;
 };
 static std::vector<Tab> g_tabs;
 static int g_activeIdx = -1;
@@ -67,6 +79,20 @@ static HWND  g_hwnd   = nullptr;
 static HWND  g_addr   = nullptr;
 static HWND  g_sbList = nullptr;
 static HFONT g_font   = nullptr;
+static HFONT g_fontSm = nullptr;
+static HFONT g_fontIcon = nullptr;
+
+static int  g_hoverTab      = -1;
+static bool g_hoverTabClose = false;
+static bool g_hoverPlus     = false;
+static int  g_hoverToolBtn  = -1;
+static int  g_hoverRightBtn = -1;
+static bool g_tracking      = false;
+
+static bool  g_animating   = false;
+static DWORD g_animStart   = 0;
+static float g_animFromW   = 0.f;
+static const DWORD kAnimMs = 140;
 
 #define REDRAW_CHROME() do { RECT _ir={0,0,20000,kTabH+kToolH}; InvalidateRect(g_hwnd,&_ir,FALSE); } while(0)
 
@@ -93,6 +119,32 @@ static std::wstring NormalizeUrl(const std::wstring& raw) {
     }
     return L"https://www.google.com/search?q="+q;
 }
+static bool IsHttps(const std::wstring& url) {
+    return url.rfind(L"https://",0)==0;
+}
+static std::wstring HostOf(const std::wstring& url) {
+    size_t p = url.find(L"://");
+    std::wstring rest = (p==std::wstring::npos) ? url : url.substr(p+3);
+    size_t slash = rest.find(L'/');
+    std::wstring host = (slash==std::wstring::npos) ? rest : rest.substr(0,slash);
+    if (host.rfind(L"www.",0)==0) host = host.substr(4);
+    return host;
+}
+static wchar_t FaviconLetter(const std::wstring& url) {
+    std::wstring h = HostOf(url);
+    for (wchar_t c : h) if (iswalnum(c)) return (wchar_t)towupper(c);
+    return L'?';
+}
+static COLORREF FaviconColor(const std::wstring& url) {
+    std::wstring h = HostOf(url);
+    unsigned hash = 0;
+    for (wchar_t c : h) hash = hash*131 + (unsigned)c;
+    static const COLORREF palette[] = {
+        RGB(66,133,244), RGB(219,68,55), RGB(244,180,0), RGB(15,157,88),
+        RGB(171,71,188), RGB(0,172,193), RGB(255,112,67), RGB(92,107,192)
+    };
+    return palette[hash % 8];
+}
 
 static RECT CR()  { RECT r; GetClientRect(g_hwnd,&r); return r; }
 static int  SW()  { return g_sideOpen ? kSideW : 0; }
@@ -100,29 +152,69 @@ static RECT TabBarRc() { RECT c=CR(); return {SW(),0,c.right,kTabH}; }
 static RECT ToolbarRc(){ RECT c=CR(); return {SW(),kTabH,c.right,kTabH+kToolH}; }
 static RECT BrowserRc(){ RECT c=CR(); return {SW(),kTabH+kToolH,c.right,c.bottom}; }
 
+static float TargetTabWidth() {
+    RECT tb=TabBarRc();
+    int n=(int)g_tabs.size(); if(!n) return 0;
+    int avail = tb.right-tb.left-40;
+    float tw = (float)avail/n - kTabGap;
+    return std::min(210.f,std::max(90.f,tw));
+}
 static RECT TabRc(int i) {
     RECT tb=TabBarRc();
-    int n=(int)g_tabs.size(); if(!n) return {tb.left,0,tb.left,kTabH};
-    int tw=(tb.right-tb.left-32)/n;
-    tw=std::min(200,std::max(80,tw));
-    return {tb.left+i*tw,0,tb.left+(i+1)*tw,kTabH};
+    float w = g_tabs[i].curW;
+    float x = tb.left+6;
+    for (int k=0;k<i;k++) x += g_tabs[k].curW + kTabGap;
+    return { (int)x, 3, (int)(x+w), kTabH-2 };
 }
 static int TabHit(int x,int y) {
     if (y<0||y>=kTabH) return -1;
     for (int i=0;i<(int)g_tabs.size();i++) {
-        RECT r=TabRc(i); if(x>=r.left&&x<r.right) return i;
+        RECT r=TabRc(i); if(x>=r.left&&x<r.right&&y>=r.top&&y<r.bottom) return i;
     }
     return -1;
 }
 static bool CloseHit(int i,int x,int y) {
-    RECT r=TabRc(i); int cx=r.right-14,cy=kTabH/2;
+    RECT r=TabRc(i); int cx=r.right-16,cy=(r.top+r.bottom)/2;
     return abs(x-cx)<9&&abs(y-cy)<9;
+}
+static RECT PlusRc() {
+    RECT tb=TabBarRc();
+    float x = tb.left+6;
+    for (auto& t:g_tabs) x += t.curW + kTabGap;
+    return { (int)x+2,7,(int)x+2+24,kTabH-7 };
+}
+
+static void StartTabAnim() {
+    g_animating = true; g_animStart = GetTickCount();
+    SetTimer(g_hwnd, ID_ANIM_TIMER, 15, nullptr);
+}
+static void StepTabAnim() {
+    float target = TargetTabWidth();
+    DWORD el = GetTickCount()-g_animStart;
+    float t = std::min(1.f,(float)el/kAnimMs);
+    bool moving=false;
+    for (auto& tb : g_tabs) {
+        if (tb.curW<=0.f) tb.curW = target;
+        float d = target - tb.curW;
+        if (fabsf(d) > 0.5f) { tb.curW += d*0.35f; moving=true; }
+        else tb.curW = target;
+    }
+    if (!moving || t>=1.f) { for (auto& tb:g_tabs) tb.curW=target; g_animating=false; KillTimer(g_hwnd,ID_ANIM_TIMER); }
+    REDRAW_CHROME();
 }
 
 static void FillRc(HDC h,RECT r,COLORREF c){HBRUSH b=CreateSolidBrush(c);FillRect(h,&r,b);DeleteObject(b);}
-static void Txt(HDC h,const std::wstring& s,RECT r,COLORREF c,UINT f=DT_SINGLELINE|DT_VCENTER|DT_CENTER|DT_END_ELLIPSIS){
+static void RoundFillRc(HDC h, RECT r, COLORREF c, int rad, COLORREF border=CLR_INVALID) {
+    HBRUSH b=CreateSolidBrush(c);
+    HPEN p = border==CLR_INVALID ? (HPEN)GetStockObject(NULL_PEN) : CreatePen(PS_SOLID,1,border);
+    HBRUSH ob=(HBRUSH)SelectObject(h,b); HPEN op=(HPEN)SelectObject(h,p);
+    RoundRect(h,r.left,r.top,r.right,r.bottom,rad,rad);
+    SelectObject(h,ob); SelectObject(h,op); DeleteObject(b);
+    if (border!=CLR_INVALID) DeleteObject(p);
+}
+static void Txt(HDC h,const std::wstring& s,RECT r,COLORREF c,HFONT f,UINT fl=DT_SINGLELINE|DT_VCENTER|DT_CENTER|DT_END_ELLIPSIS){
     SetTextColor(h,c);SetBkMode(h,TRANSPARENT);
-    HFONT o=(HFONT)SelectObject(h,g_font);DrawTextW(h,s.c_str(),-1,&r,f);SelectObject(h,o);
+    HFONT o=(HFONT)SelectObject(h,f);DrawTextW(h,s.c_str(),-1,&r,fl);SelectObject(h,o);
 }
 static void HLine(HDC h,int x1,int x2,int y,COLORREF c){HPEN p=CreatePen(PS_SOLID,1,c),o=(HPEN)SelectObject(h,p);MoveToEx(h,x1,y,nullptr);LineTo(h,x2,y);SelectObject(h,o);DeleteObject(p);}
 static void VLine(HDC h,int x,int y1,int y2,COLORREF c){HPEN p=CreatePen(PS_SOLID,1,c),o=(HPEN)SelectObject(h,p);MoveToEx(h,x,y1,nullptr);LineTo(h,x,y2);SelectObject(h,o);DeleteObject(p);}
@@ -137,62 +229,98 @@ static void PaintAll(HDC hdc) {
         int bw=(kSideW-4)/2;
         RECT bmr={2,kTabH+4,2+bw,kTabH+kToolH-4};
         RECT hir={2+bw,kTabH+4,kSideW-2,kTabH+kToolH-4};
-        FillRc(hdc,bmr,g_showBm?g_T.tabOn:g_T.tabOff);
-        FillRc(hdc,hir,!g_showBm?g_T.tabOn:g_T.tabOff);
-        Txt(hdc,L"Bookmarks",bmr,g_T.text);
-        Txt(hdc,L"History",hir,g_T.text);
+        RoundFillRc(hdc,bmr,g_showBm?g_T.tabOn:g_T.tabOff,8);
+        RoundFillRc(hdc,hir,!g_showBm?g_T.tabOn:g_T.tabOff,8);
+        Txt(hdc,L"Bookmarks",bmr,g_T.text,g_fontSm);
+        Txt(hdc,L"History",hir,g_T.text,g_fontSm);
         if (g_showBm) {
             RECT ar={2,cr.bottom-30,kSideW-2,cr.bottom-4};
-            FillRc(hdc,ar,g_T.accent);
-            Txt(hdc,L"+ Bookmark this page",ar,RGB(255,255,255));
+            RoundFillRc(hdc,ar,g_T.accent,8);
+            Txt(hdc,L"+ Bookmark this page",ar,RGB(255,255,255),g_fontSm);
         }
     }
     RECT tbr=TabBarRc();
     FillRc(hdc,tbr,g_T.chrome);
-    HLine(hdc,tbr.left,tbr.right,kTabH-1,g_T.border);
     for (int i=0;i<(int)g_tabs.size();i++) {
-        RECT tr=TabRc(i); bool act=(i==g_activeIdx);
-        FillRc(hdc,tr,act?g_T.tabOn:g_T.tabOff);
-        if (i>0) VLine(hdc,tr.left,2,kTabH-2,g_T.border);
-        RECT txr={tr.left+8,0,tr.right-22,kTabH};
-        Txt(hdc,g_tabs[i].title.empty()?L"New Tab":g_tabs[i].title,txr,g_T.text,
+        RECT tr=TabRc(i); bool act=(i==g_activeIdx); bool hov=(i==g_hoverTab);
+        COLORREF fill = act?g_T.tabOn:(hov?g_T.tabHover:g_T.chrome);
+        RoundFillRc(hdc,tr,fill,kTabRadius);
+        if (act) HLine(hdc,tr.left+6,tr.right-6,tr.bottom-1,g_T.accent);
+        int fcx=tr.left+16, fcy=(tr.top+tr.bottom)/2, fr=8;
+        HBRUSH fb=CreateSolidBrush(FaviconColor(g_tabs[i].url));
+        HBRUSH ofb=(HBRUSH)SelectObject(hdc,fb); HPEN onp=(HPEN)SelectObject(hdc,GetStockObject(NULL_PEN));
+        Ellipse(hdc,fcx-fr,fcy-fr,fcx+fr,fcy+fr);
+        SelectObject(hdc,ofb); SelectObject(hdc,onp); DeleteObject(fb);
+        wchar_t fl[2]={FaviconLetter(g_tabs[i].url),0};
+        RECT flr={fcx-fr,fcy-fr,fcx+fr,fcy+fr};
+        Txt(hdc,fl,flr,RGB(255,255,255),g_fontSm);
+        RECT txr={tr.left+30,tr.top,tr.right-24,tr.bottom};
+        Txt(hdc,g_tabs[i].title.empty()?L"New Tab":g_tabs[i].title,txr,act?g_T.text:g_T.textDim,g_fontSm,
             DT_SINGLELINE|DT_VCENTER|DT_LEFT|DT_END_ELLIPSIS);
-        RECT xr={tr.right-20,kTabH/2-8,tr.right-4,kTabH/2+8};
-        Txt(hdc,L"×",xr,g_T.text);
+        bool hovClose = hov && g_hoverTabClose;
+        RECT xr={tr.right-25,(tr.top+tr.bottom)/2-9,tr.right-7,(tr.top+tr.bottom)/2+9};
+        if (hovClose) RoundFillRc(hdc,xr,g_T.tabHover,6);
+        Txt(hdc,L"\u2715",xr,g_T.textDim,g_fontSm);
     }
-    RECT plus={tbr.right-28,4,tbr.right-4,kTabH-4};
-    FillRc(hdc,plus,g_T.tabOff); Txt(hdc,L"+",plus,g_T.text);
+    RECT plus=PlusRc();
+    RoundFillRc(hdc,plus,g_hoverPlus?g_T.tabHover:g_T.chrome,12,g_T.border);
+    Txt(hdc,L"+",plus,g_T.text,g_fontSm);
+
     RECT tr=ToolbarRc();
     FillRc(hdc,tr,g_T.chrome);
     HLine(hdc,tr.left,tr.right,tr.bottom-1,g_T.border);
-    int bx=SW()+4,by=kTabH+4,bw=28,bh=kToolH-8;
-    auto Btn=[&](int x,const wchar_t* lbl,COLORREF bg){
-        RECT r={x,by,x+bw,by+bh}; FillRc(hdc,r,bg);
-        HPEN p=CreatePen(PS_SOLID,1,g_T.border),o=(HPEN)SelectObject(hdc,p);
-        Rectangle(hdc,x,by,x+bw,by+bh); SelectObject(hdc,o); DeleteObject(p);
-        Txt(hdc,lbl,r,g_T.text);
+    int bx=SW()+10,by=kTabH+6,bw=30,bh=kToolH-12;
+    auto Btn=[&](int idx,int x,const wchar_t* lbl,COLORREF activeBg){
+        RECT r={x,by,x+bw,by+bh};
+        COLORREF fill = (g_hoverToolBtn==idx) ? g_T.btnHover : activeBg;
+        RoundFillRc(hdc,r,fill,kBtnRadius);
+        Txt(hdc,lbl,r,g_T.text,g_fontIcon);
     };
-    Btn(bx,    L"←",g_T.tabOff);
-    Btn(bx+30, L"→",g_T.tabOff);
-    Btn(bx+60, L"↺",g_T.tabOff);
-    int rx=cr.right-3*30-4;
-    Btn(rx,    g_focus?L"⊙":L"○", g_focus?RGB(200,50,50):g_T.tabOff);
-    Btn(rx+30, g_dark?L"☀":L"☾",  g_T.tabOff);
-    Btn(rx+60, g_sideOpen?L"◀":L"▶", g_T.tabOff);
+    Btn(0,bx,    L"\u2190",g_T.chrome);
+    Btn(1,bx+34, L"\u2192",g_T.chrome);
+    Btn(2,bx+68, L"\u21BA",g_T.chrome);
+
+    int addrX=bx+68+34+10;
+    int rx=cr.right-3*34-8;
+    RECT ar={addrX,kTabH+5,rx-8,kTabH+kToolH-5};
+    RoundFillRc(hdc,ar,g_dark?RGB(44,44,48):RGB(255,255,255),18,g_T.border);
+    bool https = g_activeIdx>=0 && IsHttps(g_tabs[g_activeIdx].url);
+    RECT lockr = { ar.left+6, ar.top, ar.left+26, ar.bottom };
+    Txt(hdc, https?L"\U0001F512":L"\u26A0", lockr, https?RGB(60,160,90):RGB(200,140,20), g_fontSm);
+
+    auto RBtn=[&](int idx,int x,const wchar_t* lbl,COLORREF activeBg){
+        RECT r={x,by,x+bw,by+bh};
+        COLORREF fill = (g_hoverRightBtn==idx) ? g_T.btnHover : activeBg;
+        RoundFillRc(hdc,r,fill,kBtnRadius);
+        Txt(hdc,lbl,r,g_T.text,g_fontIcon);
+    };
+    RBtn(0,rx,    g_focus?L"\u25C9":L"\u25CB", g_focus?RGB(210,70,70):g_T.chrome);
+    RBtn(1,rx+34, g_dark?L"\u2600":L"\u263E",  g_T.chrome);
+    RBtn(2,rx+68, g_sideOpen?L"\u25C0":L"\u25B6", g_T.chrome);
     if (g_focus&&g_focusSecs>0) {
         wchar_t buf[32]; swprintf(buf,32,L"%d:%02d",g_focusSecs/60,g_focusSecs%60);
-        RECT fr={rx-70,by,rx-4,by+bh};
-        Txt(hdc,buf,fr,RGB(255,80,80),DT_SINGLELINE|DT_VCENTER|DT_RIGHT);
+        RECT fr={rx-58,by,rx-8,by+bh};
+        Txt(hdc,buf,fr,RGB(220,80,80),g_fontSm,DT_SINGLELINE|DT_VCENTER|DT_RIGHT);
+    }
+}
+
+static void PositionAddressBar() {
+    RECT cr=CR();
+    int bx=SW()+10;
+    int addrX=bx+68+34+10+28;
+    int rx=cr.right-3*34-8;
+    int addrW=(rx-8)-addrX-8;
+    if (g_addr) {
+        MoveWindow(g_addr,addrX,kTabH+7,std::max(addrW,10),kToolH-14,TRUE);
+        HRGN rgn = CreateRoundRectRgn(0,0,std::max(addrW,10)+1,kToolH-14+1,10,10);
+        SetWindowRgn(g_addr,rgn,TRUE);
     }
 }
 
 static void Layout() {
     if (!g_hwnd) return;
     RECT cr=CR();
-    int addrX=SW()+4+3*30+8;
-    int rx=cr.right-3*30-4;
-    int addrW=rx-addrX-8;
-    if (g_addr) MoveWindow(g_addr,addrX,kTabH+5,std::max(addrW,10),kToolH-10,TRUE);
+    PositionAddressBar();
     if (g_sbList) {
         if (g_sideOpen) {
             MoveWindow(g_sbList,2,kTabH+kToolH,kSideW-4,cr.bottom-kTabH-kToolH-36,TRUE);
@@ -211,6 +339,7 @@ static void Layout() {
             }
         }
     }
+    StartTabAnim();
     REDRAW_CHROME();
 }
 
@@ -238,9 +367,15 @@ void OnTitleChanged(int tabId, const std::wstring& title) {
 void OnUrlChanged(int tabId, const std::wstring& url) {
     for (auto& t:g_tabs) if (t.id==tabId) {
         t.url=url;
-        if (g_activeIdx>=0&&g_tabs[g_activeIdx].id==tabId) SetWindowTextW(g_addr,url.c_str());
+        if (g_activeIdx>=0&&g_tabs[g_activeIdx].id==tabId) {
+            if (url.find(L"start.html")==std::wstring::npos)
+                SetWindowTextW(g_addr,url.c_str());
+            else
+                SetWindowTextW(g_addr,L"");
+        }
         break;
     }
+    REDRAW_CHROME();
 }
 void AddHistory(const std::wstring& title, const std::wstring& url) {
     g_history.erase(std::remove_if(g_history.begin(),g_history.end(),
@@ -250,21 +385,25 @@ void AddHistory(const std::wstring& title, const std::wstring& url) {
     if (g_sideOpen&&!g_showBm) RefreshList();
 }
 
-static void CreateTab(const std::wstring& url=L"https://www.google.com") {
+static std::wstring StartPageUrl();
+
+static void CreateTab(const std::wstring& url=L"") {
+    std::wstring realUrl = url.empty() ? StartPageUrl() : url;
     if (g_activeIdx>=0&&g_activeIdx<(int)g_tabs.size()) {
         auto& old=g_tabs[g_activeIdx];
         if (old.browser) { HWND bh=old.browser->GetHost()->GetWindowHandle(); if(bh) ShowWindow(bh,SW_HIDE); }
     }
     int id=++g_tabCtr;
-    Tab t; t.id=id; t.title=L"New Tab"; t.url=url; t.lastUsed=GetTickCount();
+    Tab t; t.id=id; t.title=L"New Tab"; t.url=realUrl; t.lastUsed=GetTickCount();
+    t.curW = g_tabs.empty() ? TargetTabWidth() : 0.f;
     t.handler=new ClientHandler(id);
     g_tabs.push_back(t);
     g_activeIdx=(int)g_tabs.size()-1;
     RECT br=BrowserRc();
     CefWindowInfo wi; wi.SetAsChild(g_hwnd,CefRect(br.left,br.top,br.right-br.left,br.bottom-br.top));
     CefBrowserSettings bs;
-    CefBrowserHost::CreateBrowser(wi,g_tabs[g_activeIdx].handler,W2A(url),bs,nullptr,nullptr);
-    SetWindowTextW(g_addr,url.c_str());
+    CefBrowserHost::CreateBrowser(wi,g_tabs[g_activeIdx].handler,W2A(realUrl),bs,nullptr,nullptr);
+    SetWindowTextW(g_addr,L"");
     Layout();
 }
 static void CloseTab(int idx) {
@@ -278,7 +417,8 @@ static void CloseTab(int idx) {
         HWND bh=a.browser->GetHost()->GetWindowHandle();
         if (bh) { RECT br=BrowserRc(); MoveWindow(bh,br.left,br.top,br.right-br.left,br.bottom-br.top,TRUE); ShowWindow(bh,SW_SHOW); }
     }
-    SetWindowTextW(g_addr,a.url.c_str()); Layout();
+    SetWindowTextW(g_addr,a.url.find(L"start.html")!=std::wstring::npos?L"":a.url.c_str());
+    Layout();
 }
 static void SwitchTab(int idx) {
     if (idx<0||idx>=(int)g_tabs.size()||idx==g_activeIdx) return;
@@ -291,7 +431,8 @@ static void SwitchTab(int idx) {
         HWND bh=t.browser->GetHost()->GetWindowHandle();
         if (bh) { RECT br=BrowserRc(); MoveWindow(bh,br.left,br.top,br.right-br.left,br.bottom-br.top,TRUE); ShowWindow(bh,SW_SHOW); }
     }
-    SetWindowTextW(g_addr,t.url.c_str()); Layout();
+    SetWindowTextW(g_addr,t.url.find(L"start.html")!=std::wstring::npos?L"":t.url.c_str());
+    Layout();
 }
 static void SmartReorder() {
     if (g_tabs.size()<=1) return;
@@ -321,26 +462,27 @@ static void Navigate(const std::wstring& input) {
         };
         CefPostTask(TID_UI, new NavTask(t.browser, W2A(url)));
     }
+    REDRAW_CHROME();
 }
 
 static void ToolbarClick(int x,int y) {
     RECT cr=CR();
-    int bx=SW()+4,by=kTabH+4,bw=28,bh=kToolH-8;
+    int bx=SW()+10,by=kTabH+6,bw=30,bh=kToolH-12;
     auto hit=[&](int ox)->bool{ return x>=bx+ox&&x<bx+ox+bw&&y>=by&&y<by+bh; };
     if (hit(0))  { if(g_activeIdx>=0&&g_tabs[g_activeIdx].browser) g_tabs[g_activeIdx].browser->GoBack();    return; }
-    if (hit(30)) { if(g_activeIdx>=0&&g_tabs[g_activeIdx].browser) g_tabs[g_activeIdx].browser->GoForward(); return; }
-    if (hit(60)) { if(g_activeIdx>=0&&g_tabs[g_activeIdx].browser) g_tabs[g_activeIdx].browser->Reload();    return; }
-    int rx=cr.right-3*30-4;
+    if (hit(34)) { if(g_activeIdx>=0&&g_tabs[g_activeIdx].browser) g_tabs[g_activeIdx].browser->GoForward(); return; }
+    if (hit(68)) { if(g_activeIdx>=0&&g_tabs[g_activeIdx].browser) g_tabs[g_activeIdx].browser->Reload();    return; }
+    int rx=cr.right-3*34-8;
     if (x>=rx&&x<rx+bw&&y>=by&&y<by+bh) {
         g_focus=!g_focus;
         if (g_focus) { g_focusSecs=25*60; SetTimer(g_hwnd,ID_FOCUS_TIMER,1000,nullptr); }
         else { KillTimer(g_hwnd,ID_FOCUS_TIMER); g_focusSecs=0; }
         REDRAW_CHROME(); return;
     }
-    if (x>=rx+30&&x<rx+58&&y>=by&&y<by+bh) {
+    if (x>=rx+34&&x<rx+64&&y>=by&&y<by+bh) {
         g_dark=!g_dark; g_T=g_dark?kDark:kLight; REDRAW_CHROME(); return;
     }
-    if (x>=rx+60&&x<rx+88&&y>=by&&y<by+bh) {
+    if (x>=rx+68&&x<rx+98&&y>=by&&y<by+bh) {
         g_sideOpen=!g_sideOpen; Layout(); return;
     }
 }
@@ -359,9 +501,51 @@ static void SidebarClick(int x,int y) {
     }
 }
 
+static void UpdateHover(int x,int y) {
+    int newHoverTab=-1; bool newHoverClose=false; bool newHoverPlus=false;
+    int newHoverTool=-1, newHoverRight=-1;
+    if (y>=0&&y<kTabH) {
+        newHoverTab = TabHit(x,y);
+        if (newHoverTab>=0) newHoverClose = CloseHit(newHoverTab,x,y);
+        RECT pr=PlusRc();
+        if (x>=pr.left&&x<pr.right&&y>=pr.top&&y<pr.bottom) newHoverPlus=true;
+    } else if (y>=kTabH&&y<kTabH+kToolH) {
+        RECT cr=CR();
+        int bx=SW()+10,by=kTabH+6,bw=30,bh=kToolH-12;
+        auto hit=[&](int ox)->bool{ return x>=bx+ox&&x<bx+ox+bw&&y>=by&&y<by+bh; };
+        if (hit(0)) newHoverTool=0; else if (hit(34)) newHoverTool=1; else if (hit(68)) newHoverTool=2;
+        int rx=cr.right-3*34-8;
+        if (x>=rx&&x<rx+bw&&y>=by&&y<by+bh) newHoverRight=0;
+        else if (x>=rx+34&&x<rx+64&&y>=by&&y<by+bh) newHoverRight=1;
+        else if (x>=rx+68&&x<rx+98&&y>=by&&y<by+bh) newHoverRight=2;
+    }
+    if (newHoverTab!=g_hoverTab||newHoverClose!=g_hoverTabClose||newHoverPlus!=g_hoverPlus||
+        newHoverTool!=g_hoverToolBtn||newHoverRight!=g_hoverRightBtn) {
+        g_hoverTab=newHoverTab; g_hoverTabClose=newHoverClose; g_hoverPlus=newHoverPlus;
+        g_hoverToolBtn=newHoverTool; g_hoverRightBtn=newHoverRight;
+        REDRAW_CHROME();
+    }
+    if (!g_tracking) {
+        TRACKMOUSEEVENT tme={sizeof(tme)}; tme.dwFlags=TME_LEAVE; tme.hwndTrack=g_hwnd;
+        TrackMouseEvent(&tme); g_tracking=true;
+    }
+}
+static void ClearHover() {
+    g_tracking=false;
+    if (g_hoverTab!=-1||g_hoverPlus||g_hoverToolBtn!=-1||g_hoverRightBtn!=-1) {
+        g_hoverTab=-1; g_hoverTabClose=false; g_hoverPlus=false; g_hoverToolBtn=-1; g_hoverRightBtn=-1;
+        REDRAW_CHROME();
+    }
+}
+
 static LRESULT CALLBACK AddrProc(HWND h,UINT m,WPARAM w,LPARAM l,UINT_PTR,DWORD_PTR) {
     if (m==WM_KEYDOWN&&w==VK_RETURN) {
         wchar_t buf[2048]; GetWindowTextW(h,buf,2048); Navigate(buf); return 0;
+    }
+    if (m==WM_SETFOCUS) {
+        LRESULT r = DefSubclassProc(h,m,w,l);
+        PostMessage(h,EM_SETSEL,0,-1);
+        return r;
     }
     return DefSubclassProc(h,m,w,l);
 }
@@ -373,7 +557,13 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         g_font=CreateFontW(13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,
             OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
             DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
-        g_addr=CreateWindowExW(WS_EX_CLIENTEDGE,L"EDIT",L"",
+        g_fontSm=CreateFontW(13,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
+            DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI");
+        g_fontIcon=CreateFontW(15,0,0,0,FW_NORMAL,0,0,0,DEFAULT_CHARSET,
+            OUT_DEFAULT_PRECIS,CLIP_DEFAULT_PRECIS,CLEARTYPE_QUALITY,
+            DEFAULT_PITCH|FF_DONTCARE,L"Segoe UI Symbol");
+        g_addr=CreateWindowExW(0,L"EDIT",L"",
             WS_CHILD|WS_VISIBLE|ES_AUTOHSCROLL,
             0,0,100,24,hwnd,nullptr,GetModuleHandle(nullptr),nullptr);
         SendMessage(g_addr,WM_SETFONT,(WPARAM)g_font,TRUE);
@@ -389,6 +579,14 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         if (wp!=SIZE_MINIMIZED) Layout();
         return 0;
     case WM_ERASEBKGND: return 1;
+    case WM_MOUSEMOVE: {
+        int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
+        UpdateHover(x,y);
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        ClearHover();
+        return 0;
     case WM_PAINT: {
         RECT cr; GetClientRect(hwnd,&cr);
         PAINTSTRUCT ps; HDC hdc=BeginPaint(hwnd,&ps);
@@ -404,8 +602,8 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
         int x=GET_X_LPARAM(lp),y=GET_Y_LPARAM(lp);
         if (g_sideOpen&&x<kSideW) { SidebarClick(x,y); return 0; }
         if (y>=0&&y<kTabH) {
-            RECT tbr=TabBarRc();
-            if (x>=tbr.right-28&&x<tbr.right-4&&y>=4&&y<kTabH-4) { CreateTab(); return 0; }
+            RECT pr=PlusRc();
+            if (x>=pr.left&&x<pr.right&&y>=pr.top&&y<pr.bottom) { CreateTab(); return 0; }
             int ti=TabHit(x,y);
             if (ti>=0) { CloseHit(ti,x,y)?CloseTab(ti):SwitchTab(ti); return 0; }
             return 0;
@@ -431,10 +629,20 @@ static LRESULT CALLBACK WndProc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp) {
                 REDRAW_CHROME();
             }
         } else if (wp==ID_SMART_TIMER) { SmartReorder(); }
+        else if (wp==ID_ANIM_TIMER) { StepTabAnim(); }
         return 0;
     case WM_DESTROY: PostQuitMessage(0); return 0;
     }
     return DefWindowProc(hwnd,msg,wp,lp);
+}
+
+static std::wstring StartPageUrl() {
+    wchar_t path[MAX_PATH];
+    GetModuleFileNameW(nullptr,path,MAX_PATH);
+    std::wstring p(path);
+    size_t slash=p.find_last_of(L"\\/");
+    std::wstring dir = (slash==std::wstring::npos)?L".":p.substr(0,slash);
+    return L"file:///" + dir + L"/start.html";
 }
 
 int APIENTRY WinMain(HINSTANCE hInstance,HINSTANCE,LPSTR,int) {
@@ -446,9 +654,9 @@ int APIENTRY WinMain(HINSTANCE hInstance,HINSTANCE,LPSTR,int) {
     WNDCLASSW wc={}; wc.lpfnWndProc=WndProc; wc.hInstance=hInstance;
     wc.lpszClassName=kWndClass; wc.hbrBackground=(HBRUSH)GetStockObject(WHITE_BRUSH);
     wc.hCursor=LoadCursor(nullptr,IDC_ARROW); RegisterClassW(&wc);
-    g_hwnd=CreateWindowExW(0,kWndClass,L"Browser",WS_OVERLAPPEDWINDOW,
+    g_hwnd=CreateWindowExW(0,kWndClass,L"LiteBrowser",WS_OVERLAPPEDWINDOW,
         CW_USEDEFAULT,CW_USEDEFAULT,1280,800,nullptr,nullptr,hInstance,nullptr);
     ShowWindow(g_hwnd,SW_SHOWNORMAL); UpdateWindow(g_hwnd);
-    CreateTab(L"https://www.google.com");
+    CreateTab();
     CefRunMessageLoop(); CefShutdown(); return 0;
 }
