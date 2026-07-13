@@ -1,8 +1,15 @@
-#include "client_handler.h"
-#include "include/cef_urlrequest.h"
 #include <windows.h>
+#include <objidl.h>
+
+#undef GetFirstChild
+#undef GetNextSibling
+
 #include <gdiplus.h>
 #include <sstream>
+
+#include "client_handler.h"
+#include "include/cef_urlrequest.h"
+
 #pragma comment(lib, "gdiplus.lib")
 
 static const char* kBlockList[] = {
