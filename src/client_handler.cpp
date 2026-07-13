@@ -123,11 +123,18 @@ void ClientHandler::OnAddressChange(CefRefPtr<CefBrowser>,
 void ClientHandler::OnFaviconURLChange(CefRefPtr<CefBrowser> browser,
                                         const std::vector<CefString>& icon_urls) {
     if (icon_urls.empty()) return;
+
     CefRefPtr<CefRequest> req = CefRequest::Create();
     req->SetURL(icon_urls[0]);
     req->SetMethod("GET");
+
     CefRefPtr<FaviconFetcher> fetcher = new FaviconFetcher(tab_id_);
-    CefURLRequest::Create(req, fetcher, browser->GetMainFrame()->GetBrowserContext());
+
+    CefURLRequest::Create(
+        req,
+        fetcher,
+        browser->GetHost()->GetRequestContext()
+    );
 }
 CefResourceRequestHandler::ReturnValue ClientHandler::OnBeforeResourceLoad(
     CefRefPtr<CefBrowser>, CefRefPtr<CefFrame>,
