@@ -94,14 +94,14 @@ static HBITMAP DecodeFaviconBytes(const std::vector<uint8_t>& data)
     if (!image)
         return nullptr;
 
-    if (!image->AddBitmap(
-        16,
-        16,
-        CEF_COLOR_TYPE_BGRA_8888,
-        CEF_ALPHA_TYPE_PREMULTIPLIED,
-        data.data(),
-        data.size()))
-    {
+    image->AddBitmap(
+    16,
+    16,
+    CEF_COLOR_TYPE_BGRA_8888,
+    CEF_ALPHA_TYPE_PREMULTIPLIED,
+    pixels,
+    16 * 16 * 4
+);
         return nullptr;
     }
 
@@ -133,11 +133,11 @@ static HBITMAP DecodeFaviconBytes(const std::vector<uint8_t>& data)
 
     CefRefPtr<CefBinaryValue> value =
         image->GetAsBitmap(
-            16,
-            16,
-            CEF_COLOR_TYPE_BGRA_8888,
-            CEF_ALPHA_TYPE_PREMULTIPLIED
-        );
+    16,
+    16,
+    CEF_COLOR_TYPE_BGRA_8888,
+    CEF_ALPHA_TYPE_PREMULTIPLIED
+);
 
     if (!value)
     {
