@@ -284,7 +284,7 @@ static HBITMAP DecodeFaviconBytes(const std::vector<uint8_t>& data)
 
     IWICBitmapDecoder* decoder = nullptr;
     hr = factory->CreateDecoderFromStream(
-        wicStream, nullptr, WICDecodeMetadataCacheOnLoad, IID_PPV_ARGS(&decoder)
+        wicStream, nullptr, WICDecodeMetadataCacheOnLoad, &decoder
     );
     if (FAILED(hr)) {
         wicStream->Release();
