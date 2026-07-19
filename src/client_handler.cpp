@@ -160,7 +160,7 @@ void LoadBlocklist() {
             // Strip any trailing options after '$' if they leaked through
             size_t dollar = domain.find('$');
             if (dollar != std::string::npos) domain = domain.substr(0, dollar);
-            if (!domain.empty() && domain.find('*') == std::string::npos) {
+            if (!domain.empty() && domain.size() >= 3 && domain.find('*') == std::string::npos) {
                 g_blockDomains.insert(domain);
                 continue;
             }
@@ -177,16 +177,17 @@ void LoadBlocklist() {
         bool looksLikeDomain = rule.find('.') != std::string::npos &&
                                 rule.find(' ') == std::string::npos &&
                                 rule.find('/') == std::string::npos;
-        if (looksLikeDomain) {
+        if (looksLikeDomain && rule.size() >= 3) {
             size_t dollar = rule.find('$');
             if (dollar != std::string::npos) rule = rule.substr(0, dollar);
-            g_blockDomains.insert(rule);
+            if (!rule.empty() && rule.size() >= 3) g_blockDomains.insert(rule);
         }
     }
 }
 
 static bool DomainBlocked(const std::string& url) {
     for (const auto& d : g_blockDomains) {
+        if (d.empty()) continue; // defensive: never let an empty rule match everything
         if (url.find(d) != std::string::npos) return true;
     }
     return false;
