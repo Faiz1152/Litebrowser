@@ -576,6 +576,22 @@ ClientHandler::OnBeforeResourceLoad(
     std::string url =
         request->GetURL()
         .ToString();
+    std::string lower = url;
+std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
+
+if (lower.find(".png")  != std::string::npos ||
+    lower.find(".jpg")  != std::string::npos ||
+    lower.find(".jpeg") != std::string::npos ||
+    lower.find(".gif")  != std::string::npos ||
+    lower.find(".webp") != std::string::npos ||
+    lower.find(".svg")  != std::string::npos ||
+    lower.find(".bmp")  != std::string::npos ||
+    lower.find(".avif") != std::string::npos ||
+    lower.find(".ico")  != std::string::npos ||
+    lower.find("favicon") != std::string::npos)
+{
+    return RV_CONTINUE;
+}
 
     if (g_focus)
     {
