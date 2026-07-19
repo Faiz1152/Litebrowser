@@ -13,6 +13,8 @@
 #include <fstream>
 #include <sstream>
 #include <unordered_set>
+#include <algorithm>
+#include <iterator>
 
 #include "client_handler.h"
 #include "include/cef_urlrequest.h"
@@ -169,7 +171,9 @@ void LoadBlocklist() {
         if (rule.find('*') != std::string::npos || rule.find('/') == 0) {
             size_t dollar = rule.find('$');
             if (dollar != std::string::npos) rule = rule.substr(0, dollar);
-            if (!rule.empty()) g_blockPatterns.push_back(rule);
+            size_t literalChars = 0;
+            for (char c : rule) if (c != '*') literalChars++;
+            if (!rule.empty() && literalChars >= 3) g_blockPatterns.push_back(rule);
             continue;
         }
 
@@ -183,6 +187,35 @@ void LoadBlocklist() {
             if (!rule.empty() && rule.size() >= 3) g_blockDomains.insert(rule);
         }
     }
+
+    // Self-test: make sure nothing in the loaded list blocks known-safe
+    // URLs (including the local start page). Strips any rule that does,
+    // so a bad rule from an upstream list can never blank out the browser.
+    static const char* kSafeUrls[] = {
+        "https://www.google.com/",
+        "https://www.wikipedia.org/",
+        "https://github.com/",
+        "file:///start.html",
+        nullptr
+    };
+    for (auto it = g_blockDomains.begin(); it != g_blockDomains.end(); ) {
+        bool bad = false;
+        for (int i = 0; kSafeUrls[i]; i++) {
+            std::string u = kSafeUrls[i];
+            if (!it->empty() && u.find(*it) != std::string::npos) { bad = true; break; }
+        }
+        it = bad ? g_blockDomains.erase(it) : std::next(it);
+    }
+    g_blockPatterns.erase(
+        std::remove_if(g_blockPatterns.begin(), g_blockPatterns.end(),
+            [&](const std::string& p) {
+                for (int i = 0; kSafeUrls[i]; i++) {
+                    if (WildcardMatch(kSafeUrls[i], p)) return true;
+                }
+                return false;
+            }),
+        g_blockPatterns.end()
+    );
 }
 
 static bool DomainBlocked(const std::string& url) {
@@ -194,6 +227,7 @@ static bool DomainBlocked(const std::string& url) {
 }
 static bool PatternBlocked(const std::string& url) {
     for (const auto& p : g_blockPatterns) {
+        if (p.size() < 4) continue; // defensive: too short to be a real, safe pattern
         if (WildcardMatch(url, p)) return true;
     }
     return false;
