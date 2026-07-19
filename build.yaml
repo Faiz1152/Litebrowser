@@ -1,0 +1,91 @@
+name: Build LiteBrowser
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Get the project files
+        uses: actions/checkout@v4
+
+      - name: Find the latest CEF download link
+        shell: pwsh
+        run: |
+          $index = Invoke-RestMethod -Uri "https://cef-builds.spotifycdn.com/index.json"
+          $versions = $index.windows64.versions | Where-Object { $_.channel -eq "stable" }
+          $latest = $versions[0]
+          $standardFile = $latest.files | Where-Object { $_.type -eq "standard" }
+          $url = "https://cef-builds.spotifycdn.com/" + $standardFile.name
+          Write-Host "Downloading: $url"
+          echo "CEF_URL=$url" >> $env:GITHUB_ENV
+          echo "CEF_NAME=$($standardFile.name)" >> $env:GITHUB_ENV
+
+      - name: Download CEF
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri $env:CEF_URL -OutFile cef.tar.bz2
+
+      - name: Extract CEF
+        shell: pwsh
+        run: |
+          tar -xjf cef.tar.bz2
+          $extracted = Get-ChildItem -Directory -Filter "cef_binary_*" | Select-Object -First 1
+          Rename-Item $extracted.FullName "cef"
+
+      - name: Fetch and merge ad/tracker blocklists
+        shell: pwsh
+        run: |
+          $sources = @(
+            "https://easylist.to/easylist/easylist.txt",
+            "https://easylist.to/easylist/easyprivacy.txt",
+            "https://raw.githubusercontent.com/uBlockOrigin/uAssets/master/filters/filters.txt",
+            "https://pgl.yoyo.org/adservers/serverlist.php?hostformat=adblockplus&showintro=0"
+          )
+          $outFile = "blocklist.txt"
+          if (Test-Path $outFile) { Remove-Item $outFile }
+          foreach ($url in $sources) {
+            Write-Host "Fetching: $url"
+            try {
+              $resp = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 60
+              Add-Content -Path $outFile -Value "! ---- source: $url ----"
+              Add-Content -Path $outFile -Value $resp.Content
+            } catch {
+              Write-Warning "Failed to fetch $url — continuing with remaining sources so the build doesn't fail."
+            }
+          }
+          if (-not (Test-Path $outFile)) {
+            Write-Warning "No blocklist sources were reachable. Creating an empty blocklist.txt so the build still succeeds; the app falls back to its built-in hardcoded lists."
+            New-Item -Path $outFile -ItemType File | Out-Null
+          }
+          Write-Host "blocklist.txt size:"
+          (Get-Item $outFile).Length
+
+      - name: Set up MSVC
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        shell: cmd
+        run: |
+          if exist build rmdir /s /q build
+          cmake -B build -DCEF_ROOT="cef" -G "Ninja" -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: cmd
+        run: |
+          cmake --build build
+
+      - name: Copy start page and blocklist into build output
+        shell: pwsh
+        run: |
+          Copy-Item -Path "start.html" -Destination "build\" -Force
+          Copy-Item -Path "blocklist.txt" -Destination "build\" -Force
+
+      - name: Upload finished browser
+        uses: actions/upload-artifact@v4
+        with:
+          name: LiteBrowser-windows
+          path: build/
