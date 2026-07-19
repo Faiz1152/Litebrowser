@@ -87,5 +87,5 @@ jobs:
       - name: Upload finished browser
         uses: actions/upload-artifact@v4
         with:
-          name: LiteBrowser-windows
+          name: LiteBrowser-windows v3.0
           path: build/
