@@ -133,6 +133,27 @@ static bool WildcardMatch(const std::string& url, const std::string& pattern) {
     return pi == pattern.size();
 }
 
+// Domains that must never be blocked wholesale, even if a fetched filter
+// list contains a rule targeting them with qualifiers (like $domain=) that
+// our simplified parser can't honor. These serve real content (video, etc),
+// not just ads — YouTube's ad blocking is handled separately and precisely
+// by IsYouTubeAd() in OnBeforeResourceLoad, so the generic list doesn't
+// need to (and must not) touch these.
+static const char* kNeverBlockDomains[] = {
+    "googlevideo.com",
+    "ytimg.com",
+    "youtube.com",
+    "youtu.be",
+    "ggpht.com",
+    nullptr
+};
+static bool IsProtectedDomain(const std::string& s) {
+    for (int i = 0; kNeverBlockDomains[i]; i++)
+        if (s.find(kNeverBlockDomains[i]) != std::string::npos)
+            return true;
+    return false;
+}
+
 void LoadBlocklist() {
     if (g_blocklistLoaded) return;
     g_blocklistLoaded = true;
@@ -162,7 +183,8 @@ void LoadBlocklist() {
             // Strip any trailing options after '$' if they leaked through
             size_t dollar = domain.find('$');
             if (dollar != std::string::npos) domain = domain.substr(0, dollar);
-            if (!domain.empty() && domain.size() >= 3 && domain.find('*') == std::string::npos) {
+            if (!domain.empty() && domain.size() >= 3 && domain.find('*') == std::string::npos
+                && !IsProtectedDomain(domain)) {
                 g_blockDomains.insert(domain);
                 continue;
             }
@@ -173,7 +195,7 @@ void LoadBlocklist() {
             if (dollar != std::string::npos) rule = rule.substr(0, dollar);
             size_t literalChars = 0;
             for (char c : rule) if (c != '*') literalChars++;
-            if (!rule.empty() && literalChars >= 3) g_blockPatterns.push_back(rule);
+            if (!rule.empty() && literalChars >= 3 && !IsProtectedDomain(rule)) g_blockPatterns.push_back(rule);
             continue;
         }
 
@@ -181,7 +203,7 @@ void LoadBlocklist() {
         bool looksLikeDomain = rule.find('.') != std::string::npos &&
                                 rule.find(' ') == std::string::npos &&
                                 rule.find('/') == std::string::npos;
-        if (looksLikeDomain && rule.size() >= 3) {
+        if (looksLikeDomain && rule.size() >= 3 && !IsProtectedDomain(rule)) {
             size_t dollar = rule.find('$');
             if (dollar != std::string::npos) rule = rule.substr(0, dollar);
             if (!rule.empty() && rule.size() >= 3) g_blockDomains.insert(rule);
@@ -576,22 +598,6 @@ ClientHandler::OnBeforeResourceLoad(
     std::string url =
         request->GetURL()
         .ToString();
-    std::string lower = url;
-std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-
-if (lower.find(".png")  != std::string::npos ||
-    lower.find(".jpg")  != std::string::npos ||
-    lower.find(".jpeg") != std::string::npos ||
-    lower.find(".gif")  != std::string::npos ||
-    lower.find(".webp") != std::string::npos ||
-    lower.find(".svg")  != std::string::npos ||
-    lower.find(".bmp")  != std::string::npos ||
-    lower.find(".avif") != std::string::npos ||
-    lower.find(".ico")  != std::string::npos ||
-    lower.find("favicon") != std::string::npos)
-{
-    return RV_CONTINUE;
-}
 
     if (g_focus)
     {
