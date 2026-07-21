@@ -17,6 +17,7 @@ class LiteBrowserApp : public CefApp {
       const CefString& process_type,
       CefRefPtr<CefCommandLine> command_line) override {
     command_line->AppendSwitch("disable-gpu-compositing");
+    command_line->AppendSwitch("disable-gpu"); // test: broader fallback if compositing-only didn't fully fix white video
   }
 
  private:
