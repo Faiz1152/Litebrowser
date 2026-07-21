@@ -577,7 +577,16 @@ void ClientHandler::OnLoadEnd(
         return;
 
     if (!g_blockAds)
-        return;
+    return;
+
+std::string currentUrl = frame->GetURL().ToString();
+
+bool isYouTube =
+    currentUrl.find("youtube.com") != std::string::npos ||
+    currentUrl.find("youtu.be") != std::string::npos;
+
+if (!isYouTube)
+    return;
 
     static const char* kInjectJS = R"JS(
 (function(){
@@ -591,7 +600,7 @@ void ClientHandler::OnLoadEnd(
       '.ytp-ad-module,.video-ads,.ytp-ad-overlay-container,',
       '.ytp-ad-player-overlay,ytd-promoted-sparkles-web-renderer,',
       'ytd-display-ad-renderer,ytd-in-feed-ad-layout-renderer,',
-      '#player-ads,#masthead-ad'
+      '#player-ads'
     ].join('') + '{display:none!important;visibility:hidden!important;}';
 
     var forceShow = document.createElement('style');
