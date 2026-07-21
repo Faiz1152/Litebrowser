@@ -150,9 +150,18 @@ static const char* kNeverBlockDomains[] = {
     nullptr
 };
 static bool IsProtectedDomain(const std::string& s) {
-    for (int i = 0; kNeverBlockDomains[i]; i++)
-        if (s.find(kNeverBlockDomains[i]) != std::string::npos)
-            return true;
+    for (int i = 0; kNeverBlockDomains[i]; i++) {
+        std::string p = kNeverBlockDomains[i];
+        // Catch both directions:
+        //  - rule is a more specific match on a protected domain
+        //    (rule contains the protected name, e.g. "sub.youtube.com")
+        //  - rule is a broader parent-domain rule that would still match
+        //    the protected domain at request time (protected name
+        //    contains the rule, e.g. rule="googleapis.com" and protected
+        //    domain is "youtubei.googleapis.com")
+        if (s.find(p) != std::string::npos) return true;
+        if (s.size() >= 5 && p.find(s) != std::string::npos) return true;
+    }
     return false;
 }
 
@@ -220,6 +229,10 @@ void LoadBlocklist() {
         "https://www.wikipedia.org/",
         "https://github.com/",
         "file:///start.html",
+        "https://www.youtube.com/",
+        "https://youtubei.googleapis.com/youtubei/v1/search",
+        "https://www.gstatic.com/youtube/img/",
+        "https://i.ytimg.com/vi/",
         nullptr
     };
     for (auto it = g_blockDomains.begin(); it != g_blockDomains.end(); ) {
