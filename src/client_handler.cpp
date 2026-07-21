@@ -75,16 +75,16 @@ static const char* kFocusBlock[] = {
 
 // YouTube-specific ad server / path patterns. Kept separate from the
 // general blocklist so it's easy to tune without touching blocklist.txt.
-// These target ad DELIVERY, not video delivery, so videos keep playing.
+// These are dedicated ad-tracking/ad-request endpoints, entirely separate
+// calls from the actual video stream (googlevideo.com/videoplayback), so
+// blocking them cannot affect real video playback.
 static const char* kYouTubeAdPatterns[] = {
     "youtube.com/api/stats/ads",
     "youtube.com/pagead/",
     "youtube.com/ptracking",
-    "youtube.com/api/stats/qoe",
-    "googlevideo.com/videoplayback?",  // narrowed further below by param check
+    "youtube.com/get_midroll",
     "googleads.g.doubleclick.net",
     "static.doubleclick.net",
-    "youtube.com/get_midroll",
     nullptr
 };
 
@@ -146,6 +146,7 @@ static const char* kNeverBlockDomains[] = {
     "youtu.be",
     "ggpht.com",
     "gstatic.com",
+    "youtubei.googleapis.com",
     nullptr
 };
 static bool IsProtectedDomain(const std::string& s) {
@@ -270,24 +271,9 @@ bool ClientHandler::IsBlocked(const std::string& url)
 
 bool ClientHandler::IsYouTubeAd(const std::string& url)
 {
-    // Only special-case within youtube/googlevideo domains, never block
-    // general googlevideo.com playback requests wholesale (that would
-    // break video, not just ads).
     for (int i = 0; kYouTubeAdPatterns[i]; i++) {
-        if (url.find(kYouTubeAdPatterns[i]) != std::string::npos) {
-            if (std::string(kYouTubeAdPatterns[i]).rfind("googlevideo.com", 0) == 0 ||
-                url.find("googlevideo.com/videoplayback?") != std::string::npos) {
-                // Only treat as an ad request if it explicitly carries an
-                // ad-marker param; otherwise let it through (real video).
-                if (url.find("&ctier=") != std::string::npos ||
-                    url.find("&oad=") != std::string::npos ||
-                    url.find("adformat") != std::string::npos) {
-                    return true;
-                }
-                continue;
-            }
+        if (url.find(kYouTubeAdPatterns[i]) != std::string::npos)
             return true;
-        }
     }
     return false;
 }
