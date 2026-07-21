@@ -145,6 +145,7 @@ static const char* kNeverBlockDomains[] = {
     "youtube.com",
     "youtu.be",
     "ggpht.com",
+    "gstatic.com",
     nullptr
 };
 static bool IsProtectedDomain(const std::string& s) {
@@ -565,6 +566,10 @@ void ClientHandler::OnLoadEnd(
       'ytd-display-ad-renderer,ytd-in-feed-ad-layout-renderer,',
       '#player-ads,#masthead-ad'
     ].join('') + '{display:none!important;visibility:hidden!important;}';
+
+    var forceShow = document.createElement('style');
+    forceShow.textContent = 'ytd-searchbox,#search-form,#search-icon-legacy,ytd-masthead #container{display:flex!important;visibility:visible!important;}';
+    document.documentElement.appendChild(forceShow);
     document.documentElement.appendChild(style);
 
     function skipYouTubeAds(){
