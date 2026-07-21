@@ -558,7 +558,6 @@ void ClientHandler::OnLoadEnd(
     style.textContent = [
       '[class*="ad-container"],[id*="ad-container"],',
       '[class*="advertisement"],[id*="advertisement"],',
-      '[class^="ad-"],[class*=" ad-"],[id^="ad-"],',
       'ins.adsbygoogle,iframe[src*="doubleclick"],',
       'iframe[src*="googlesyndication"],',
       '.ytp-ad-module,.video-ads,.ytp-ad-overlay-container,',
