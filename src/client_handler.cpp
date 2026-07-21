@@ -300,6 +300,15 @@ static bool PatternBlocked(const std::string& url) {
 
 bool ClientHandler::IsBlocked(const std::string& url)
 {
+    if (url.find("youtube.com") != std::string::npos ||
+    url.find("youtubei.googleapis.com") != std::string::npos ||
+    url.find("ytimg.com") != std::string::npos ||
+    url.find("googlevideo.com") != std::string::npos ||
+    url.find("ggpht.com") != std::string::npos)
+{
+    return false;
+}
+    
     for (int i = 0; kBlockList[i]; i++)
         if (url.find(kBlockList[i]) != std::string::npos)
             return true;
