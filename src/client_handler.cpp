@@ -255,11 +255,39 @@ void LoadBlocklist() {
     );
 }
 
-static bool DomainBlocked(const std::string& url) {
-    for (const auto& d : g_blockDomains) {
-        if (d.empty()) continue; // defensive: never let an empty rule match everything
-        if (url.find(d) != std::string::npos) return true;
+static bool DomainBlocked(const std::string& url)
+{
+    for (const auto& d : g_blockDomains)
+    {
+        if (d.empty())
+            continue;
+
+        size_t pos = url.find(d);
+
+        while (pos != std::string::npos)
+        {
+            bool beforeOK =
+                (pos == 0 ||
+                 url[pos - 1] == '.' ||
+                 url[pos - 1] == '/' ||
+                 url[pos - 1] == ':');
+
+            size_t end = pos + d.length();
+
+            bool afterOK =
+                (end >= url.length() ||
+                 url[end] == '/' ||
+                 url[end] == ':' ||
+                 url[end] == '?' ||
+                 url[end] == '&');
+
+            if (beforeOK && afterOK)
+                return true;
+
+            pos = url.find(d, pos + 1);
+        }
     }
+
     return false;
 }
 static bool PatternBlocked(const std::string& url) {
@@ -623,12 +651,23 @@ ClientHandler::OnBeforeResourceLoad(
             return RV_CANCEL;
     }
 
-    if ((g_blockAds ||
-         g_blockTrackers) &&
-        IsBlocked(url))
-    {
-        return RV_CANCEL;
-    }
+    // Protect YouTube core resources from the generic blocklist.
+// YouTube ads are still handled separately by IsYouTubeAd().
+bool isYouTubeCore =
+    url.find("youtube.com") != std::string::npos ||
+    url.find("ytimg.com") != std::string::npos ||
+    url.find("googlevideo.com") != std::string::npos ||
+    url.find("ggpht.com") != std::string::npos ||
+    url.find("gstatic.com") != std::string::npos ||
+    url.find("youtubei.googleapis.com") != std::string::npos;
+
+if (!isYouTubeCore &&
+    (g_blockAds ||
+     g_blockTrackers) &&
+    IsBlocked(url))
+{
+    return RV_CANCEL;
+}
 
     return RV_CONTINUE;
 }
