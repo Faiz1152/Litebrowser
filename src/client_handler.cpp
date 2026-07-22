@@ -167,6 +167,7 @@ static const char* kNeverBlockDomains[] = {
     "accounts.google.com",
     "accounts.youtube.com",
     "googleusercontent.com",
+    "static.doubleclick.net/instream/ad_status.js",
     nullptr
 };
 static bool IsProtectedDomain(const std::string& s) {
