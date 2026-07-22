@@ -31,7 +31,7 @@
 // blocklist.txt so nothing that worked before stops working).
 // ---------------------------------------------------------------------
 static const char* kBlockList[] = {
-    "doubleclick.net","googlesyndication.com",
+    ""googlesyndication.com",
     "googleadservices.com","adnxs.com",
     "advertising.com","adroll.com",
     "criteo.com","criteo.net",
@@ -86,7 +86,6 @@ static const char* kYouTubeAdPatterns[] = {
     "youtube.com/ptracking",
     "youtube.com/get_midroll",
     "googleads.g.doubleclick.net",
-    "static.doubleclick.net",
     nullptr
 };
 
@@ -167,7 +166,7 @@ static const char* kNeverBlockDomains[] = {
     "accounts.google.com",
     "accounts.youtube.com",
     "googleusercontent.com",
-    "static.doubleclick.net/instream/ad_status.js",
+    "static.doubleclick.net",
     nullptr
 };
 static bool IsProtectedDomain(const std::string& s) {
@@ -314,9 +313,16 @@ static bool PatternBlocked(const std::string& url) {
 
 bool ClientHandler::IsBlocked(const std::string& url)
 {
+        if (url.find("static.doubleclick.net/instream/ad_status.js") != std::string::npos)
+        return false;
     for (int i = 0; kBlockList[i]; i++)
-        if (url.find(kBlockList[i]) != std::string::npos)
-            return true;
+{
+    if (url.find(kBlockList[i]) != std::string::npos)
+    {
+        DebugLog("Matched hardcoded rule: " + std::string(kBlockList[i]));
+        return true;
+    }
+}
 
     if (DomainBlocked(url)) return true;
     if (PatternBlocked(url)) return true;
