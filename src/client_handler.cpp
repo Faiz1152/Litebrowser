@@ -164,6 +164,9 @@ static const char* kNeverBlockDomains[] = {
     "ggpht.com",
     "gstatic.com",
     "youtubei.googleapis.com",
+    "accounts.google.com",
+    "accounts.youtube.com",
+    "googleusercontent.com",
     nullptr
 };
 static bool IsProtectedDomain(const std::string& s) {
@@ -276,10 +279,28 @@ void LoadBlocklist() {
 }
 
 static bool DomainBlocked(const std::string& url) {
+    size_t start = url.find("://");
+    if (start == std::string::npos)
+        start = 0;
+    else
+        start += 3;
+
+    size_t end = url.find('/', start);
+    std::string host = (end == std::string::npos)
+        ? url.substr(start)
+        : url.substr(start, end - start);
+
     for (const auto& d : g_blockDomains) {
-        if (d.empty()) continue; // defensive: never let an empty rule match everything
-        if (url.find(d) != std::string::npos) return true;
+        if (host == d)
+            return true;
+
+        if (host.size() > d.size() &&
+            host.compare(host.size() - d.size(), d.size(), d) == 0 &&
+            host[host.size() - d.size() - 1] == '.') {
+            return true;
+        }
     }
+
     return false;
 }
 static bool PatternBlocked(const std::string& url) {
