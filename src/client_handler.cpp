@@ -82,10 +82,7 @@ static const char* kFocusBlock[] = {
 // blocking them cannot affect real video playback.
 static const char* kYouTubeAdPatterns[] = {
     "youtube.com/api/stats/ads",
-    "youtube.com/pagead/",
-    "youtube.com/ptracking",
     "youtube.com/get_midroll",
-    "googleads.g.doubleclick.net",
     nullptr
 };
 
@@ -684,12 +681,12 @@ ClientHandler::OnBeforeResourceLoad(
     IsBlocked(url))
 {
     // Allow YouTube required resources that are falsely caught
-    if (url.find("googleads.g.doubleclick.net/pagead/id") != std::string::npos ||
-        url.find("static.doubleclick.net/instream/ad_status.js") != std::string::npos)
-    {
-        DebugLog("ALLOWED (YouTube required): " + url);
-        return RV_CONTINUE;
-    }
+    if (url.find("googleads.g.doubleclick.net") != std::string::npos ||
+    url.find("static.doubleclick.net") != std::string::npos)
+{
+    DebugLog("ALLOWED (YouTube ad support): " + url);
+    return RV_CONTINUE;
+}
 
     DebugLog("BLOCKED (generic/blocklist): " + url);
     return RV_CANCEL;
