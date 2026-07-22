@@ -319,6 +319,15 @@ bool ClientHandler::IsBlocked(const std::string& url)
 {
     if (url.find(kBlockList[i]) != std::string::npos)
     {
+        // Do not block YouTube-related Google ad calls.
+        // YouTube handling is done separately in IsYouTubeAd().
+        if (url.find("youtube.com") != std::string::npos ||
+            url.find("googlevideo.com") != std::string::npos ||
+            url.find("ytimg.com") != std::string::npos)
+        {
+            continue;
+        }
+
         DebugLog("Matched hardcoded rule: " + std::string(kBlockList[i]));
         return true;
     }
@@ -671,12 +680,20 @@ ClientHandler::OnBeforeResourceLoad(
     }
 
     if ((g_blockAds ||
-         g_blockTrackers) &&
-        IsBlocked(url))
+     g_blockTrackers) &&
+    IsBlocked(url))
+{
+    // Allow YouTube required resources that are falsely caught
+    if (url.find("googleads.g.doubleclick.net/pagead/id") != std::string::npos ||
+        url.find("static.doubleclick.net/instream/ad_status.js") != std::string::npos)
     {
-        DebugLog("BLOCKED (generic/blocklist): " + url);
-        return RV_CANCEL;
+        DebugLog("ALLOWED (YouTube required): " + url);
+        return RV_CONTINUE;
     }
+
+    DebugLog("BLOCKED (generic/blocklist): " + url);
+    return RV_CANCEL;
+}
 
     return RV_CONTINUE;
 }
