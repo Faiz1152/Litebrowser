@@ -15,6 +15,8 @@
 #include <unordered_set>
 #include <algorithm>
 #include <iterator>
+#include <chrono>
+#include <ctime>
 
 #include "client_handler.h"
 #include "include/cef_urlrequest.h"
@@ -113,6 +115,21 @@ static std::wstring GetExeDir() {
     std::wstring p(path);
     size_t slash = p.find_last_of(L"\\/");
     return (slash == std::wstring::npos) ? L"." : p.substr(0, slash);
+}
+
+// V3.1 debug logging: writes to debug.log next to the exe so blocked
+// requests (and why) can be inspected after the fact instead of guessing.
+static void DebugLog(const std::string& msg) {
+    static std::wstring logPath = GetExeDir() + L"\\debug.log";
+    std::ofstream f(logPath, std::ios::app);
+    if (!f.is_open()) return;
+    auto now = std::chrono::system_clock::now();
+    std::time_t t = std::chrono::system_clock::to_time_t(now);
+    char buf[32];
+    struct tm tmv;
+    localtime_s(&tmv, &t);
+    strftime(buf, sizeof(buf), "%H:%M:%S", &tmv);
+    f << "[" << buf << "] " << msg << "\n";
 }
 
 static bool WildcardMatch(const std::string& url, const std::string& pattern) {
@@ -253,41 +270,16 @@ void LoadBlocklist() {
             }),
         g_blockPatterns.end()
     );
+
+    DebugLog("Blocklist loaded: " + std::to_string(g_blockDomains.size()) +
+             " domains, " + std::to_string(g_blockPatterns.size()) + " patterns.");
 }
 
-static bool DomainBlocked(const std::string& url)
-{
-    for (const auto& d : g_blockDomains)
-    {
-        if (d.empty())
-            continue;
-
-        size_t pos = url.find(d);
-
-        while (pos != std::string::npos)
-        {
-            bool beforeOK =
-                (pos == 0 ||
-                 url[pos - 1] == '.' ||
-                 url[pos - 1] == '/' ||
-                 url[pos - 1] == ':');
-
-            size_t end = pos + d.length();
-
-            bool afterOK =
-                (end >= url.length() ||
-                 url[end] == '/' ||
-                 url[end] == ':' ||
-                 url[end] == '?' ||
-                 url[end] == '&');
-
-            if (beforeOK && afterOK)
-                return true;
-
-            pos = url.find(d, pos + 1);
-        }
+static bool DomainBlocked(const std::string& url) {
+    for (const auto& d : g_blockDomains) {
+        if (d.empty()) continue; // defensive: never let an empty rule match everything
+        if (url.find(d) != std::string::npos) return true;
     }
-
     return false;
 }
 static bool PatternBlocked(const std::string& url) {
@@ -300,15 +292,6 @@ static bool PatternBlocked(const std::string& url) {
 
 bool ClientHandler::IsBlocked(const std::string& url)
 {
-    if (url.find("youtube.com") != std::string::npos ||
-    url.find("youtubei.googleapis.com") != std::string::npos ||
-    url.find("ytimg.com") != std::string::npos ||
-    url.find("googlevideo.com") != std::string::npos ||
-    url.find("ggpht.com") != std::string::npos)
-{
-    return false;
-}
-    
     for (int i = 0; kBlockList[i]; i++)
         if (url.find(kBlockList[i]) != std::string::npos)
             return true;
@@ -586,16 +569,7 @@ void ClientHandler::OnLoadEnd(
         return;
 
     if (!g_blockAds)
-    return;
-
-std::string currentUrl = frame->GetURL().ToString();
-
-bool isYouTube =
-    currentUrl.find("youtube.com") != std::string::npos ||
-    currentUrl.find("youtu.be") != std::string::npos;
-
-if (!isYouTube)
-    return;
+        return;
 
     static const char* kInjectJS = R"JS(
 (function(){
@@ -609,12 +583,8 @@ if (!isYouTube)
       '.ytp-ad-module,.video-ads,.ytp-ad-overlay-container,',
       '.ytp-ad-player-overlay,ytd-promoted-sparkles-web-renderer,',
       'ytd-display-ad-renderer,ytd-in-feed-ad-layout-renderer,',
-      '#player-ads'
+      '#player-ads,#masthead-ad'
     ].join('') + '{display:none!important;visibility:hidden!important;}';
-
-    var forceShow = document.createElement('style');
-    forceShow.textContent = 'ytd-searchbox,#search-form,#search-icon-legacy,ytd-masthead #container{display:flex!important;visibility:visible!important;}';
-    document.documentElement.appendChild(forceShow);
     document.documentElement.appendChild(style);
 
     function skipYouTubeAds(){
@@ -657,6 +627,7 @@ ClientHandler::OnBeforeResourceLoad(
             if (url.find(kFocusBlock[i])
                 != std::string::npos)
             {
+                DebugLog("BLOCKED (focus mode, matched '" + std::string(kFocusBlock[i]) + "'): " + url);
                 return RV_CANCEL;
             }
         }
@@ -665,27 +636,19 @@ ClientHandler::OnBeforeResourceLoad(
     if (url.find("youtube.com") != std::string::npos ||
         url.find("googlevideo.com") != std::string::npos)
     {
-        if (g_blockAds && IsYouTubeAd(url))
+        if (g_blockAds && IsYouTubeAd(url)) {
+            DebugLog("BLOCKED (youtube ad pattern): " + url);
             return RV_CANCEL;
+        }
     }
 
-    // Protect YouTube core resources from the generic blocklist.
-// YouTube ads are still handled separately by IsYouTubeAd().
-bool isYouTubeCore =
-    url.find("youtube.com") != std::string::npos ||
-    url.find("ytimg.com") != std::string::npos ||
-    url.find("googlevideo.com") != std::string::npos ||
-    url.find("ggpht.com") != std::string::npos ||
-    url.find("gstatic.com") != std::string::npos ||
-    url.find("youtubei.googleapis.com") != std::string::npos;
-
-if (!isYouTubeCore &&
-    (g_blockAds ||
-     g_blockTrackers) &&
-    IsBlocked(url))
-{
-    return RV_CANCEL;
-}
+    if ((g_blockAds ||
+         g_blockTrackers) &&
+        IsBlocked(url))
+    {
+        DebugLog("BLOCKED (generic/blocklist): " + url);
+        return RV_CANCEL;
+    }
 
     return RV_CONTINUE;
 }
