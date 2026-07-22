@@ -31,7 +31,7 @@
 // blocklist.txt so nothing that worked before stops working).
 // ---------------------------------------------------------------------
 static const char* kBlockList[] = {
-    ""googlesyndication.com",
+    "googlesyndication.com",
     "googleadservices.com","adnxs.com",
     "advertising.com","adroll.com",
     "criteo.com","criteo.net",
