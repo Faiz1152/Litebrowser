@@ -594,6 +594,12 @@ ClientHandler::OnBeforeResourceLoad(
     std::string url =
         request->GetURL()
         .ToString();
+    // Temporary test: disable ad blocking only on the YouTube homepage.
+if (url == "https://www.youtube.com/" ||
+    url == "https://youtube.com/")
+{
+    return RV_CONTINUE;
+}
 
     if (g_focus)
     {
