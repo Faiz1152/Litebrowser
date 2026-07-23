@@ -633,6 +633,8 @@ int APIENTRY WinMain(HINSTANCE hInstance,HINSTANCE,LPSTR,int){
     CefRefPtr<LiteBrowserApp> app(new LiteBrowserApp);
     int ex=CefExecuteProcess(args,app.get(),nullptr);if(ex>=0)return ex;
     CefSettings s;s.no_sandbox=true;
+    std::wstring cachePath = GetProfileDir() + L"\\Cache";
+    CefString(&s.root_cache_path).FromWString(cachePath);
     CefInitialize(args,s,app.get(),nullptr);
     LoadBlocklist(); // V3.1: load blocklist.txt (baked in at build time) before any tabs open
     WNDCLASSW wc={};wc.lpfnWndProc=WndProc;wc.hInstance=hInstance;
