@@ -632,11 +632,23 @@ int APIENTRY WinMain(HINSTANCE hInstance,HINSTANCE,LPSTR,int){
     CefMainArgs args(hInstance);
     CefRefPtr<LiteBrowserApp> app(new LiteBrowserApp);
     int ex=CefExecuteProcess(args,app.get(),nullptr);if(ex>=0)return ex;
-    CefSettings s;s.no_sandbox=true;
+    CefSettings s;
+    s.no_sandbox=true;
+    
+    // ============================================================
+    // CRITICAL FIX: Set user-agent to Chrome
+    // YouTube checks browser capabilities and hides UI if it doesn't
+    // recognize the browser. CEF's default user-agent is not Chrome.
+    // ============================================================
+    CefString(&s.user_agent).FromASCII(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    );
+    
     std::wstring cachePath = GetProfileDir() + L"\\Cache";
     CefString(&s.root_cache_path).FromWString(cachePath);
     CefInitialize(args,s,app.get(),nullptr);
-    LoadBlocklist(); // V3.1: load blocklist.txt (baked in at build time) before any tabs open
+    LoadBlocklist();
     WNDCLASSW wc={};wc.lpfnWndProc=WndProc;wc.hInstance=hInstance;
     wc.lpszClassName=kWndClass;wc.hbrBackground=(HBRUSH)GetStockObject(WHITE_BRUSH);
     wc.hCursor=LoadCursor(nullptr,IDC_ARROW);
