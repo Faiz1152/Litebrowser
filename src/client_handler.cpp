@@ -264,20 +264,7 @@ static bool PatternBlocked(const std::string& url) {
 
 bool ClientHandler::IsBlocked(const std::string& url)
 {
-    // Protected domains (video CDN, thumbnails, core APIs, etc.) are immune
-    // to ALL blocking below — hardcoded list, domain list, AND generic
-    // wildcard patterns — since a pattern written for an unrelated ad
-    // network can otherwise coincidentally match a path fragment on a
-    // protected host even though no domain-level rule ever targeted it.
     if (IsProtectedDomain(HostOfUrl(url)))
-        return false;
-
-    // Test: user wants to isolate whether these specific endpoints are
-    // required for YouTube's UI (search bar/logo/sign-in). If this fixes
-    // it, we know these are load-bearing; if not, they're unrelated.
-    if (url.find("googleads.g.doubleclick.net/pagead/id") != std::string::npos)
-        return false;
-    if (url.find("static.doubleclick.net/instream/ad_status.js") != std::string::npos)
         return false;
 
     for (int i = 0; kBlockList[i]; i++)
@@ -538,17 +525,106 @@ bool ClientHandler::OnBeforePopup(
 }
 
 void ClientHandler::OnLoadEnd(
-    CefRefPtr<CefBrowser>,
+    CefRefPtr<CefBrowser> browser,
     CefRefPtr<CefFrame> frame,
-    int)
+    int httpStatusCode)
 {
     if (!frame->IsMain())
         return;
 
+    std::string url = frame->GetURL().ToString();
+
+    // ============================================================
+    // CRITICAL FIX FOR YOUTUBE: Restore UI elements AFTER page load
+    // ============================================================
+    // YouTube's initialization is complete by OnLoadEnd(), so now we
+    // can safely make header elements visible. The user-agent set in
+    // main.cpp ensures YouTube recognizes us as Chrome and creates
+    // all header elements in the first place.
+    // ============================================================
+    if (url.find("youtube.com") != std::string::npos) {
+        static const char* kYouTubeUIFixJS = R"JS(
+(function(){
+  function restoreUI() {
+    try {
+      // Make header/masthead visible
+      const masthead = document.querySelector('ytd-masthead');
+      if (masthead) {
+        masthead.style.display = '';
+        masthead.style.visibility = 'visible';
+        masthead.style.opacity = '1';
+      }
+
+      // Make search bar visible
+      const search = document.querySelector('#search');
+      if (search) {
+        search.style.display = '';
+        search.style.visibility = 'visible';
+        search.style.opacity = '1';
+      }
+
+      // Make search icon visible
+      const searchIcon = document.querySelector('#search-icon-legacy');
+      if (searchIcon) {
+        searchIcon.style.display = '';
+        searchIcon.style.visibility = 'visible';
+        searchIcon.style.opacity = '1';
+      }
+
+      // Make top menu buttons visible (sign-in, etc.)
+      const topbarButtons = document.querySelectorAll('ytd-topbar-menu-button-renderer');
+      topbarButtons.forEach(function(btn) {
+        btn.style.display = '';
+        btn.style.visibility = 'visible';
+        btn.style.opacity = '1';
+      });
+
+      // Make all button renderers in header visible
+      const buttons = document.querySelectorAll('ytd-button-renderer');
+      buttons.forEach(function(btn) {
+        btn.style.display = '';
+        btn.style.visibility = 'visible';
+        btn.style.opacity = '1';
+      });
+    } catch(e) {}
+  }
+
+  // Run immediately after page load
+  restoreUI();
+
+  // Also monitor for SPA navigation and restore UI when it changes
+  const observer = new MutationObserver(function(mutations) {
+    for (let mutation of mutations) {
+      if (mutation.type === 'childList') {
+        // Only restore once per major change to avoid excessive calls
+        restoreUI();
+        break;
+      }
+    }
+  });
+
+  // Monitor the document root for changes (SPA navigation)
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: false
+  });
+})();
+)JS";
+
+        frame->ExecuteJavaScript(kYouTubeUIFixJS, frame->GetURL(), 0);
+    }
+
+    // ============================================================
+    // Ad hiding: CSS-only approach to avoid breaking JavaScript
+    // ============================================================
+    // We only hide ads via CSS selectors; we don't touch YouTube's
+    // JavaScript objects. This is safe and won't interfere with
+    // page initialization.
+    // ============================================================
     if (!g_blockAds)
         return;
 
-    static const char* kInjectJS = R"JS(
+    static const char* kAdHideCSS = R"JS(
 (function(){
   try {
     var style = document.createElement('style');
@@ -562,26 +638,12 @@ void ClientHandler::OnLoadEnd(
       'ytd-display-ad-renderer,ytd-in-feed-ad-layout-renderer,',
       '#player-ads,#masthead-ad'
     ].join('') + '{display:none!important;visibility:hidden!important;}';
-    document.documentElement.appendChild(style);
-
-    function skipYouTubeAds(){
-      var skip = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern');
-      if (skip) skip.click();
-      var video = document.querySelector('video');
-      var adShowing = document.querySelector('.ad-showing');
-      if (adShowing && video && video.duration) {
-        video.currentTime = video.duration;
-      }
-    }
-
-    var mo = new MutationObserver(function(){ skipYouTubeAds(); });
-    mo.observe(document.documentElement, {childList:true, subtree:true});
-    setInterval(skipYouTubeAds, 500);
+    document.head.appendChild(style);
   } catch (e) {}
 })();
 )JS";
 
-    frame->ExecuteJavaScript(kInjectJS, frame->GetURL(), 0);
+    frame->ExecuteJavaScript(kAdHideCSS, frame->GetURL(), 0);
 }
 
 CefResourceRequestHandler::ReturnValue
@@ -591,26 +653,34 @@ ClientHandler::OnBeforeResourceLoad(
     CefRefPtr<CefRequest> request,
     CefRefPtr<CefCallback>)
 {
-    std::string url =
-        request->GetURL()
-        .ToString();
-    std::string resourceType =
-    std::to_string((int)request->GetResourceType());
+    std::string url = request->GetURL().ToString();
+    std::string resourceType = std::to_string((int)request->GetResourceType());
 
-DebugLog("REQUEST [" + resourceType + "]: " + url);
-    // TEMPORARY TEST: Disable all blocking for YouTube and its core resources.
-{
-    return RV_CONTINUE;
-}
+    DebugLog("REQUEST [" + resourceType + "]: " + url);
 
+    // ============================================================
+    // CRITICAL: YouTube needs most of its requests to succeed.
+    // Only block actual ad serving patterns, NOT initialization APIs.
+    // ============================================================
+    if (url.find("youtube.com") != std::string::npos ||
+        url.find("youtubei.googleapis.com") != std::string::npos ||
+        url.find("googlevideo.com") != std::string::npos)
+    {
+        // Only block known YouTube ad endpoints
+        if (g_blockAds && IsYouTubeAd(url)) {
+            DebugLog("BLOCKED (youtube ad pattern): " + url);
+            return RV_CANCEL;
+        }
+        // ALLOW everything else on YouTube to ensure initialization works
+        return RV_CONTINUE;
+    }
+
+    // Focus mode: block distracting sites entirely
     if (g_focus)
     {
-        for (int i = 0;
-             kFocusBlock[i];
-             i++)
+        for (int i = 0; kFocusBlock[i]; i++)
         {
-            if (url.find(kFocusBlock[i])
-                != std::string::npos)
+            if (url.find(kFocusBlock[i]) != std::string::npos)
             {
                 DebugLog("BLOCKED (focus mode, matched '" + std::string(kFocusBlock[i]) + "'): " + url);
                 return RV_CANCEL;
@@ -618,18 +688,8 @@ DebugLog("REQUEST [" + resourceType + "]: " + url);
         }
     }
 
-    if (url.find("youtube.com") != std::string::npos ||
-        url.find("googlevideo.com") != std::string::npos)
-    {
-        if (g_blockAds && IsYouTubeAd(url)) {
-            DebugLog("BLOCKED (youtube ad pattern): " + url);
-            return RV_CANCEL;
-        }
-    }
-
-    if ((g_blockAds ||
-         g_blockTrackers) &&
-        IsBlocked(url))
+    // Block other ads and trackers
+    if ((g_blockAds || g_blockTrackers) && IsBlocked(url))
     {
         DebugLog("BLOCKED (generic/blocklist): " + url);
         return RV_CANCEL;
