@@ -26,10 +26,6 @@
 #pragma comment(lib, "gdiplus.lib")
 #pragma comment(lib, "windowscodecs.lib")
 
-// ---------------------------------------------------------------------
-// Original hardcoded lists (kept as-is; still checked alongside the big
-// blocklist.txt so nothing that worked before stops working).
-// ---------------------------------------------------------------------
 static const char* kBlockList[] = {
     "googlesyndication.com",
     "googleadservices.com","adnxs.com",
@@ -75,32 +71,12 @@ static const char* kFocusBlock[] = {
     nullptr
 };
 
-// YouTube-specific ad server / path patterns. Kept separate from the
-// general blocklist so it's easy to tune without touching blocklist.txt.
-// These are dedicated ad-tracking/ad-request endpoints, entirely separate
-// calls from the actual video stream (googlevideo.com/videoplayback), so
-// blocking them cannot affect real video playback.
 static const char* kYouTubeAdPatterns[] = {
     "youtube.com/api/stats/ads",
     "youtube.com/get_midroll",
     nullptr
 };
 
-// ---------------------------------------------------------------------
-// V3.1: big blocklist.txt (EasyList + EasyPrivacy + uBlock filters +
-// Peter Lowe's list), fetched and merged at BUILD time by GitHub Actions,
-// shipped next to the exe, loaded once here at startup.
-//
-// Parsing note: this is a lightweight loader, not a full Adblock Plus
-// filter engine. It extracts what it can reliably act on:
-//   - "||domain.tld^" style rules  -> exact/subdomain domain block
-//   - plain hostname lines          -> exact/subdomain domain block
-//   - lines with '*' wildcards      -> substring/wildcard pattern block
-// Cosmetic rules (##, #@#), exception rules (@@), and option-heavy rules
-// ($script,domain=...) are skipped for matching purposes because they need
-// a real filter engine to apply correctly — but nothing is deleted from
-// blocklist.txt itself, so the full list still ships untrimmed.
-// ---------------------------------------------------------------------
 static std::unordered_set<std::string> g_blockDomains;
 static std::vector<std::string> g_blockPatterns;
 static bool g_blocklistLoaded = false;
@@ -113,8 +89,6 @@ static std::wstring GetExeDir() {
     return (slash == std::wstring::npos) ? L"." : p.substr(0, slash);
 }
 
-// V3.1 debug logging: writes to debug.log next to the exe so blocked
-// requests (and why) can be inspected after the fact instead of guessing.
 static void DebugLog(const std::string& msg) {
     static std::wstring logPath = GetExeDir() + L"\\debug.log";
     std::ofstream f(logPath, std::ios::app);
@@ -129,7 +103,6 @@ static void DebugLog(const std::string& msg) {
 }
 
 static bool WildcardMatch(const std::string& url, const std::string& pattern) {
-    // Simple '*' wildcard matcher (Adblock Plus style, minus '^' separators).
     size_t pi = 0, ui = 0, star = std::string::npos, match = 0;
     while (ui < url.size()) {
         if (pi < pattern.size() && (pattern[pi] == url[ui])) {
@@ -146,12 +119,6 @@ static bool WildcardMatch(const std::string& url, const std::string& pattern) {
     return pi == pattern.size();
 }
 
-// Domains that must never be blocked wholesale, even if a fetched filter
-// list contains a rule targeting them with qualifiers (like $domain=) that
-// our simplified parser can't honor. These serve real content (video, etc),
-// not just ads — YouTube's ad blocking is handled separately and precisely
-// by IsYouTubeAd() in OnBeforeResourceLoad, so the generic list doesn't
-// need to (and must not) touch these.
 static const char* kNeverBlockDomains[] = {
     "googlevideo.com",
     "ytimg.com",
@@ -160,22 +127,18 @@ static const char* kNeverBlockDomains[] = {
     "ggpht.com",
     "gstatic.com",
     "youtubei.googleapis.com",
+    "youtube.googleapis.com",
     "accounts.google.com",
     "accounts.youtube.com",
     "googleusercontent.com",
-    "static.doubleclick.net",
+    "l.google.com",
+    "apis.google.com",
+    "widevine.com",
     nullptr
 };
 static bool IsProtectedDomain(const std::string& s) {
     for (int i = 0; kNeverBlockDomains[i]; i++) {
         std::string p = kNeverBlockDomains[i];
-        // Catch both directions:
-        //  - rule is a more specific match on a protected domain
-        //    (rule contains the protected name, e.g. "sub.youtube.com")
-        //  - rule is a broader parent-domain rule that would still match
-        //    the protected domain at request time (protected name
-        //    contains the rule, e.g. rule="googleapis.com" and protected
-        //    domain is "youtubei.googleapis.com")
         if (s.find(p) != std::string::npos) return true;
         if (s.size() >= 5 && p.find(s) != std::string::npos) return true;
     }
@@ -189,26 +152,23 @@ void LoadBlocklist() {
     std::wstring path = GetExeDir() + L"\\blocklist.txt";
     std::ifstream file(path);
     if (!file.is_open()) {
-        // Not fatal — browser still works with the hardcoded lists above.
         return;
     }
 
     std::string line;
     while (std::getline(file, line)) {
         if (line.empty()) continue;
-        if (line[0] == '!' || line[0] == '[') continue;           // comment / metadata
-        if (line.rfind("@@", 0) == 0) continue;                    // exception rule, skip
-        if (line.find("##") != std::string::npos) continue;        // cosmetic rule, skip
-        if (line.find("#@#") != std::string::npos) continue;       // cosmetic exception, skip
+        if (line[0] == '!' || line[0] == '[') continue;
+        if (line.rfind("@@", 0) == 0) continue;
+        if (line.find("##") != std::string::npos) continue;
+        if (line.find("#@#") != std::string::npos) continue;
 
         std::string rule = line;
 
         if (rule.rfind("||", 0) == 0) {
-            // ||domain.tld^ or ||domain.tld/path
             std::string body = rule.substr(2);
             size_t end = body.find_first_of("^/");
             std::string domain = (end == std::string::npos) ? body : body.substr(0, end);
-            // Strip any trailing options after '$' if they leaked through
             size_t dollar = domain.find('$');
             if (dollar != std::string::npos) domain = domain.substr(0, dollar);
             if (!domain.empty() && domain.size() >= 3 && domain.find('*') == std::string::npos
@@ -227,7 +187,6 @@ void LoadBlocklist() {
             continue;
         }
 
-        // Plain hostname line (no special chars) -> treat as domain rule
         bool looksLikeDomain = rule.find('.') != std::string::npos &&
                                 rule.find(' ') == std::string::npos &&
                                 rule.find('/') == std::string::npos;
@@ -238,9 +197,6 @@ void LoadBlocklist() {
         }
     }
 
-    // Self-test: make sure nothing in the loaded list blocks known-safe
-    // URLs (including the local start page). Strips any rule that does,
-    // so a bad rule from an upstream list can never blank out the browser.
     static const char* kSafeUrls[] = {
         "https://www.google.com/",
         "https://www.wikipedia.org/",
@@ -275,17 +231,15 @@ void LoadBlocklist() {
              " domains, " + std::to_string(g_blockPatterns.size()) + " patterns.");
 }
 
-static bool DomainBlocked(const std::string& url) {
+static std::string HostOfUrl(const std::string& url) {
     size_t start = url.find("://");
-    if (start == std::string::npos)
-        start = 0;
-    else
-        start += 3;
-
+    start = (start == std::string::npos) ? 0 : start + 3;
     size_t end = url.find('/', start);
-    std::string host = (end == std::string::npos)
-        ? url.substr(start)
-        : url.substr(start, end - start);
+    return (end == std::string::npos) ? url.substr(start) : url.substr(start, end - start);
+}
+
+static bool DomainBlocked(const std::string& url) {
+    std::string host = HostOfUrl(url);
 
     for (const auto& d : g_blockDomains) {
         if (host == d)
@@ -302,7 +256,7 @@ static bool DomainBlocked(const std::string& url) {
 }
 static bool PatternBlocked(const std::string& url) {
     for (const auto& p : g_blockPatterns) {
-        if (p.size() < 4) continue; // defensive: too short to be a real, safe pattern
+        if (p.size() < 4) continue;
         if (WildcardMatch(url, p)) return true;
     }
     return false;
@@ -310,25 +264,22 @@ static bool PatternBlocked(const std::string& url) {
 
 bool ClientHandler::IsBlocked(const std::string& url)
 {
-        if (url.find("static.doubleclick.net/instream/ad_status.js") != std::string::npos)
+    // Protected domains (video CDN, thumbnails, core APIs, etc.) are immune
+    // to ALL blocking below — hardcoded list, domain list, AND generic
+    // wildcard patterns — since a pattern written for an unrelated ad
+    // network can otherwise coincidentally match a path fragment on a
+    // protected host even though no domain-level rule ever targeted it.
+    if (IsProtectedDomain(HostOfUrl(url)))
         return false;
-    for (int i = 0; kBlockList[i]; i++)
-{
-    if (url.find(kBlockList[i]) != std::string::npos)
-    {
-        // Do not block YouTube-related Google ad calls.
-        // YouTube handling is done separately in IsYouTubeAd().
-        if (url.find("youtube.com") != std::string::npos ||
-            url.find("googlevideo.com") != std::string::npos ||
-            url.find("ytimg.com") != std::string::npos)
-        {
-            continue;
-        }
 
-        DebugLog("Matched hardcoded rule: " + std::string(kBlockList[i]));
-        return true;
+    for (int i = 0; kBlockList[i]; i++)
+    {
+        if (url.find(kBlockList[i]) != std::string::npos)
+        {
+            DebugLog("Matched hardcoded rule: " + std::string(kBlockList[i]));
+            return true;
+        }
     }
-}
 
     if (DomainBlocked(url)) return true;
     if (PatternBlocked(url)) return true;
@@ -345,11 +296,6 @@ bool ClientHandler::IsYouTubeAd(const std::string& url)
     return false;
 }
 
-// ---------------------------------------------------------------------
-// Favicon handling (fixed — previously this file had two DecodeFaviconBytes
-// definitions spliced into one broken function with mismatched braces).
-// This is the single, complete WIC-based implementation.
-// ---------------------------------------------------------------------
 static HBITMAP CreateBitmap16FromHICON(HICON icon)
 {
     ICONINFO ii{};
@@ -561,9 +507,6 @@ void ClientHandler::OnFaviconURLChange(
     );
 }
 
-// ---------------------------------------------------------------------
-// V3.1: popup blocking
-// ---------------------------------------------------------------------
 bool ClientHandler::OnBeforePopup(
     CefRefPtr<CefBrowser>,
     CefRefPtr<CefFrame>,
@@ -580,20 +523,12 @@ bool ClientHandler::OnBeforePopup(
     bool*)
 {
     if (!g_blockPopups)
-        return false; // false = allow
+        return false;
 
     std::string url = target_url.ToString();
-    // Always block ad-network popups outright, and block everything else
-    // too while g_blockPopups is on (matches the "block or block ad-only"
-    // plan — set to ad-only by removing the "return true" fallthrough below
-    // if you want popups from non-ad sites through).
-    return true; // true = block
+    return true;
 }
 
-// ---------------------------------------------------------------------
-// V3.1: CSS + JS injection to hide/remove ads that slip past network
-// blocking (in-page ad containers, YouTube overlay ads, etc.)
-// ---------------------------------------------------------------------
 void ClientHandler::OnLoadEnd(
     CefRefPtr<CefBrowser>,
     CefRefPtr<CefFrame> frame,
@@ -677,20 +612,12 @@ ClientHandler::OnBeforeResourceLoad(
     }
 
     if ((g_blockAds ||
-     g_blockTrackers) &&
-    IsBlocked(url))
-{
-    // Allow YouTube required resources that are falsely caught
-    if (url.find("googleads.g.doubleclick.net") != std::string::npos ||
-    url.find("static.doubleclick.net") != std::string::npos)
-{
-    DebugLog("ALLOWED (YouTube ad support): " + url);
-    return RV_CONTINUE;
-}
-
-    DebugLog("BLOCKED (generic/blocklist): " + url);
-    return RV_CANCEL;
-}
+         g_blockTrackers) &&
+        IsBlocked(url))
+    {
+        DebugLog("BLOCKED (generic/blocklist): " + url);
+        return RV_CANCEL;
+    }
 
     return RV_CONTINUE;
 }
