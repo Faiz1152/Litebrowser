@@ -272,6 +272,14 @@ bool ClientHandler::IsBlocked(const std::string& url)
     if (IsProtectedDomain(HostOfUrl(url)))
         return false;
 
+    // Test: user wants to isolate whether these specific endpoints are
+    // required for YouTube's UI (search bar/logo/sign-in). If this fixes
+    // it, we know these are load-bearing; if not, they're unrelated.
+    if (url.find("googleads.g.doubleclick.net/pagead/id") != std::string::npos)
+        return false;
+    if (url.find("static.doubleclick.net/instream/ad_status.js") != std::string::npos)
+        return false;
+
     for (int i = 0; kBlockList[i]; i++)
     {
         if (url.find(kBlockList[i]) != std::string::npos)
