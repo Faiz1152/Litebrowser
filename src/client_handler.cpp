@@ -594,9 +594,18 @@ ClientHandler::OnBeforeResourceLoad(
     std::string url =
         request->GetURL()
         .ToString();
-    // Temporary test: disable ad blocking only on the YouTube homepage.
-if (url == "https://www.youtube.com/" ||
-    url == "https://youtube.com/")
+    // TEMPORARY TEST: Disable all blocking for YouTube and its core resources.
+if (url.find("youtube.com") != std::string::npos ||
+    url.find("youtubei.googleapis.com") != std::string::npos ||
+    url.find("ytimg.com") != std::string::npos ||
+    url.find("googlevideo.com") != std::string::npos ||
+    url.find("ggpht.com") != std::string::npos ||
+    url.find("gstatic.com") != std::string::npos ||
+    url.find("googleusercontent.com") != std::string::npos ||
+    url.find("accounts.google.com") != std::string::npos)
+{
+    return RV_CONTINUE;
+}
 {
     return RV_CONTINUE;
 }
