@@ -594,18 +594,11 @@ ClientHandler::OnBeforeResourceLoad(
     std::string url =
         request->GetURL()
         .ToString();
+    std::string resourceType =
+    std::to_string((int)request->GetResourceType());
+
+DebugLog("REQUEST [" + resourceType + "]: " + url);
     // TEMPORARY TEST: Disable all blocking for YouTube and its core resources.
-if (url.find("youtube.com") != std::string::npos ||
-    url.find("youtubei.googleapis.com") != std::string::npos ||
-    url.find("ytimg.com") != std::string::npos ||
-    url.find("googlevideo.com") != std::string::npos ||
-    url.find("ggpht.com") != std::string::npos ||
-    url.find("gstatic.com") != std::string::npos ||
-    url.find("googleusercontent.com") != std::string::npos ||
-    url.find("accounts.google.com") != std::string::npos)
-{
-    return RV_CONTINUE;
-}
 {
     return RV_CONTINUE;
 }
