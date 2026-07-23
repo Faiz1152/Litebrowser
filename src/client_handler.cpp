@@ -535,96 +535,69 @@ void ClientHandler::OnLoadEnd(
     std::string url = frame->GetURL().ToString();
 
     // ============================================================
-    // CRITICAL FIX FOR YOUTUBE: Restore UI elements AFTER page load
-    // ============================================================
-    // YouTube's initialization is complete by OnLoadEnd(), so now we
-    // can safely make header elements visible. The user-agent set in
-    // main.cpp ensures YouTube recognizes us as Chrome and creates
-    // all header elements in the first place.
+    // YOUTUBE-SPECIFIC HANDLING
+    // Separate ad blocking from header restoration to avoid conflicts
     // ============================================================
     if (url.find("youtube.com") != std::string::npos) {
-        static const char* kYouTubeUIFixJS = R"JS(
+        // FIRST: Restore header visibility (innocuous, just clears inline styles)
+        static const char* kYouTubeHeaderFix = R"JS(
 (function(){
-  function restoreUI() {
+  function ensureHeaderVisible() {
     try {
-      // Make header/masthead visible
       const masthead = document.querySelector('ytd-masthead');
       if (masthead) {
         masthead.style.display = '';
         masthead.style.visibility = 'visible';
         masthead.style.opacity = '1';
       }
-
-      // Make search bar visible
-      const search = document.querySelector('#search');
-      if (search) {
-        search.style.display = '';
-        search.style.visibility = 'visible';
-        search.style.opacity = '1';
-      }
-
-      // Make search icon visible
-      const searchIcon = document.querySelector('#search-icon-legacy');
-      if (searchIcon) {
-        searchIcon.style.display = '';
-        searchIcon.style.visibility = 'visible';
-        searchIcon.style.opacity = '1';
-      }
-
-      // Make top menu buttons visible (sign-in, etc.)
-      const topbarButtons = document.querySelectorAll('ytd-topbar-menu-button-renderer');
-      topbarButtons.forEach(function(btn) {
-        btn.style.display = '';
-        btn.style.visibility = 'visible';
-        btn.style.opacity = '1';
-      });
-
-      // Make all button renderers in header visible
-      const buttons = document.querySelectorAll('ytd-button-renderer');
-      buttons.forEach(function(btn) {
-        btn.style.display = '';
-        btn.style.visibility = 'visible';
-        btn.style.opacity = '1';
-      });
     } catch(e) {}
   }
-
-  // Run immediately after page load
-  restoreUI();
-
-  // Also monitor for SPA navigation and restore UI when it changes
-  const observer = new MutationObserver(function(mutations) {
-    for (let mutation of mutations) {
-      if (mutation.type === 'childList') {
-        // Only restore once per major change to avoid excessive calls
-        restoreUI();
-        break;
-      }
-    }
-  });
-
-  // Monitor the document root for changes (SPA navigation)
-  observer.observe(document.documentElement, {
-    childList: true,
-    subtree: false
-  });
+  
+  // Run immediately
+  ensureHeaderVisible();
+  
+  // Run again after a short delay in case YouTube re-renders
+  setTimeout(ensureHeaderVisible, 500);
+  setTimeout(ensureHeaderVisible, 1000);
 })();
 )JS";
-
-        frame->ExecuteJavaScript(kYouTubeUIFixJS, frame->GetURL(), 0);
+        frame->ExecuteJavaScript(kYouTubeHeaderFix, frame->GetURL(), 0);
+        
+        // SECOND: Hide ads ONLY if blocking is enabled
+        if (g_blockAds) {
+            static const char* kYouTubeAdHideCSS = R"JS(
+(function(){
+  try {
+    var style = document.createElement('style');
+    style.textContent = [
+      // Only hide SPECIFIC ad elements, not general containers
+      'ins.adsbygoogle,',
+      'iframe[src*="doubleclick"],',
+      'iframe[src*="googlesyndication"],',
+      '.ytp-ad-module,',
+      '.video-ads,',
+      '.ytp-ad-overlay-container,',
+      '.ytp-ad-player-overlay,',
+      'ytd-promoted-sparkles-web-renderer,',
+      'ytd-display-ad-renderer,',
+      'ytd-in-feed-ad-layout-renderer,'
+    ].join('') + '{display:none !important;}';
+    document.head.appendChild(style);
+  } catch(e) {}
+})();
+)JS";
+            frame->ExecuteJavaScript(kYouTubeAdHideCSS, frame->GetURL(), 0);
+        }
+        return;
     }
 
     // ============================================================
-    // Ad hiding: CSS-only approach to avoid breaking JavaScript
-    // ============================================================
-    // We only hide ads via CSS selectors; we don't touch YouTube's
-    // JavaScript objects. This is safe and won't interfere with
-    // page initialization.
+    // NON-YOUTUBE SITES: Standard ad blocking
     // ============================================================
     if (!g_blockAds)
         return;
 
-    static const char* kAdHideCSS = R"JS(
+    static const char* kGenericAdHideCSS = R"JS(
 (function(){
   try {
     var style = document.createElement('style');
@@ -632,18 +605,14 @@ void ClientHandler::OnLoadEnd(
       '[class*="ad-container"],[id*="ad-container"],',
       '[class*="advertisement"],[id*="advertisement"],',
       'ins.adsbygoogle,iframe[src*="doubleclick"],',
-      'iframe[src*="googlesyndication"],',
-      '.ytp-ad-module,.video-ads,.ytp-ad-overlay-container,',
-      '.ytp-ad-player-overlay,ytd-promoted-sparkles-web-renderer,',
-      'ytd-display-ad-renderer,ytd-in-feed-ad-layout-renderer,',
-      '#player-ads,#masthead-ad'
-    ].join('') + '{display:none!important;visibility:hidden!important;}';
+      'iframe[src*="googlesyndication"]'
+    ].join('') + '{display:none!important;}';
     document.head.appendChild(style);
   } catch (e) {}
 })();
 )JS";
 
-    frame->ExecuteJavaScript(kAdHideCSS, frame->GetURL(), 0);
+    frame->ExecuteJavaScript(kGenericAdHideCSS, frame->GetURL(), 0);
 }
 
 CefResourceRequestHandler::ReturnValue
