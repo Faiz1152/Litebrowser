@@ -89,7 +89,12 @@ static std::wstring GetExeDir() {
     return (slash == std::wstring::npos) ? L"." : p.substr(0, slash);
 }
 
+// DISABLED: Debug logging to reduce file I/O
+// Uncomment to re-enable: set DEBUG_LOGGING to 1
+#define DEBUG_LOGGING 0
+
 static void DebugLog(const std::string& msg) {
+#if DEBUG_LOGGING
     static std::wstring logPath = GetExeDir() + L"\\debug.log";
     std::ofstream f(logPath, std::ios::app);
     if (!f.is_open()) return;
@@ -100,6 +105,7 @@ static void DebugLog(const std::string& msg) {
     localtime_s(&tmv, &t);
     strftime(buf, sizeof(buf), "%H:%M:%S", &tmv);
     f << "[" << buf << "] " << msg << "\n";
+#endif
 }
 
 static bool WildcardMatch(const std::string& url, const std::string& pattern) {
